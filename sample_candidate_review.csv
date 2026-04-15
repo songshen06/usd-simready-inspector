@@ -1,0 +1,2 @@
+asset_id,file,asset_variant_role,structure_pattern,semantic_candidates,material_family_candidates,physics_profile_candidates,collider_recommendation,simready_overall,review_flags,human_semantic_label,human_material_family,human_profile,human_notes,approved
+forklift,/data/assets/forklift.usdz,main,single_mesh_single_body,forklift(0.92); industrial_vehicle(0.86),painted_surface(0.84); rubber(0.84),wheeled_rigid_vehicle(0.93),convexHull,high,collision_present_without_approximation;mass_schema_without_value;missing_physics_material,,,,,

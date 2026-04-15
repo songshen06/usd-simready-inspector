@@ -1,0 +1,188 @@
+{
+  "file": "/data/assets/forklift.usdz",
+  "stage": {
+    "opened": true,
+    "default_prim": "/Forklift",
+    "up_axis": "Y",
+    "meters_per_unit": 0.01,
+    "start_time_code": 0.0,
+    "end_time_code": 0.0,
+    "frames_per_second": 24.0
+  },
+  "summary": {
+    "prim_count": 128,
+    "mesh_count": 14,
+    "xform_count": 20,
+    "material_count": 4,
+    "subset_count": 3,
+    "schema_counts": {
+      "Material": 4,
+      "Mesh": 14,
+      "Xform": 20
+    },
+    "has_any_physics": true,
+    "has_any_material_binding": true
+  },
+  "root_prims": [
+    "/Forklift"
+  ],
+  "geometry": {
+    "mesh_prims": [
+      {
+        "path": "/Forklift/Body",
+        "points_count": 3280,
+        "face_vertex_counts_count": 1640,
+        "face_vertex_indices_count": 6560,
+        "has_extent": true,
+        "has_normals": true,
+        "has_st": true,
+        "primvars": [
+          "st"
+        ],
+        "bbox_local": {
+          "min": [-1.2, -0.8, 0.0],
+          "max": [1.1, 0.9, 2.4],
+          "size": [2.3, 1.7, 2.4],
+          "center": [-0.05, 0.05, 1.2]
+        },
+        "bbox_world": {
+          "min": [-1.2, -0.8, 0.0],
+          "max": [1.1, 0.9, 2.4],
+          "size": [2.3, 1.7, 2.4],
+          "center": [-0.05, 0.05, 1.2]
+        }
+      }
+    ],
+    "bbox": {
+      "local": {
+        "min": [-1.5, -1.0, 0.0],
+        "max": [1.5, 1.0, 2.8],
+        "size": [3.0, 2.0, 2.8],
+        "center": [0.0, 0.0, 1.4]
+      },
+      "world": {
+        "min": [-1.5, -1.0, 0.0],
+        "max": [1.5, 1.0, 2.8],
+        "size": [3.0, 2.0, 2.8],
+        "center": [0.0, 0.0, 1.4]
+      }
+    },
+    "extent_info": [
+      {
+        "path": "/Forklift/Body",
+        "has_extent": true,
+        "extent": [[-1.2, -0.8, 0.0], [1.1, 0.9, 2.4]]
+      }
+    ],
+    "shape_hints": {
+      "is_box_like": true,
+      "is_flat": false,
+      "is_tall": false,
+      "is_elongated": false
+    }
+  },
+  "materials": {
+    "material_prims": [
+      {
+        "path": "/Forklift/Looks/Paint",
+        "name": "Paint",
+        "outputs": ["surface"],
+        "base_material": null
+      }
+    ],
+    "bindings": [
+      {
+        "target_prim": "/Forklift/Body",
+        "material_path": "/Forklift/Looks/Paint",
+        "binding_purpose": "allPurpose",
+        "relationship_name": "material:binding",
+        "whether_on_subset": false
+      }
+    ],
+    "subsets": [
+      {
+        "subset_path": "/Forklift/Body/subset_0",
+        "familyName": "materialBind",
+        "elementType": "face",
+        "indices_count": 120,
+        "bound_material": "/Forklift/Looks/Rubber"
+      }
+    ],
+    "render_materials": [
+      {
+        "path": "/Forklift/Looks/Paint",
+        "name": "Paint",
+        "outputs": ["surface"],
+        "base_material": null
+      }
+    ],
+    "physics_material_bindings": [],
+    "material_family_candidates": []
+  },
+  "physics": {
+    "rigid_bodies": [
+      {
+        "path": "/Forklift",
+        "schema": "UsdPhysics.RigidBodyAPI"
+      }
+    ],
+    "colliders": [
+      {
+        "path": "/Forklift/Body",
+        "schema": "UsdPhysics.CollisionAPI"
+      }
+    ],
+    "mass_api": [
+      {
+        "path": "/Forklift",
+        "schema": "UsdPhysics.MassAPI"
+      }
+    ],
+    "articulations": [],
+    "joints": [],
+    "physx": [],
+    "physics_schemas_detected": [
+      "UsdPhysics.CollisionAPI",
+      "UsdPhysics.MassAPI",
+      "UsdPhysics.RigidBodyAPI"
+    ],
+    "physics_profile_candidates": []
+  },
+  "metadata": {
+    "asset_info": {
+      "identifier": "forklift"
+    },
+    "kinds": [
+      "component"
+    ],
+    "custom_data_hits": [],
+    "variant_sets": [],
+    "documentation": [],
+    "display_names": [
+      {
+        "path": "/Forklift",
+        "display_name": "Forklift"
+      }
+    ],
+    "model_metadata": [
+      {
+        "path": "/Forklift",
+        "kind": "component",
+        "asset_name": "forklift",
+        "asset_identifier": "@forklift.usdz@"
+      }
+    ],
+    "semantic_candidates": []
+  },
+  "semantic_candidates": [],
+  "physics_profile_candidates": [],
+  "collider_recommendation": {
+    "recommended": "convexHull",
+    "basis": "placeholder_for_pipeline_inference"
+  },
+  "material_family_candidates": [],
+  "issues": [],
+  "notes": [
+    "shape_hints are heuristic only and should be validated in downstream pipeline logic."
+  ]
+}

@@ -1,0 +1,157 @@
+{
+  "asset_id": "forklift",
+  "file": "/data/assets/forklift.usdz",
+  "asset_variant_role": {
+    "value": "main",
+    "basis": "basename does not match base/inst suffix conventions",
+    "confidence": 0.72
+  },
+  "semantic_candidates": [
+    {
+      "label": "forklift",
+      "source": "metadata.asset_info.identifier",
+      "basis": [
+        "normalized candidate derived from metadata.asset_info.identifier: forklift"
+      ],
+      "confidence": 0.92
+    },
+    {
+      "label": "industrial_vehicle",
+      "source": "keyword_heuristic",
+      "basis": [
+        "keyword \"forklift\" matched normalized value \"forklift\" from metadata.asset_info.identifier"
+      ],
+      "confidence": 0.86
+    }
+  ],
+  "material_family_candidates": [
+    {
+      "label": "painted_surface",
+      "source": "material_name_keyword",
+      "basis": [
+        "keyword \"paint\" matched material signal \"Paint\""
+      ],
+      "confidence": 0.84
+    },
+    {
+      "label": "rubber",
+      "source": "material_name_keyword",
+      "basis": [
+        "keyword \"rubber\" matched material signal \"/Forklift/Body/subset_0\""
+      ],
+      "confidence": 0.84
+    }
+  ],
+  "structure_pattern": {
+    "pattern_class": "single_mesh_single_body",
+    "physics_root": "/Forklift",
+    "mass_owner": "/Forklift",
+    "collision_prims": [
+      "/Forklift/Body"
+    ],
+    "render_mesh_prims": [
+      "/Forklift/Body"
+    ],
+    "material_bound_prims": [
+      "/Forklift/Body"
+    ],
+    "basis": [
+      "one render mesh and one rigid body path found",
+      "physics_root selected from first rigid body path: /Forklift",
+      "mass_owner selected from first mass path: /Forklift"
+    ],
+    "confidence": 0.9
+  },
+  "component_map": [
+    {
+      "mesh_path": "/Forklift/Body",
+      "render_materials": [
+        "/Forklift/Looks/Paint"
+      ],
+      "subset_materials": [
+        "/Forklift/Looks/Rubber"
+      ],
+      "has_collider": true,
+      "collider_schema": "UsdPhysics.CollisionAPI",
+      "collider_approximation": null,
+      "has_physics_material": false,
+      "physics_materials": []
+    }
+  ],
+  "geometry_features": {
+    "world_bbox_size": [3.0, 2.0, 2.8],
+    "world_bbox_center": [0.0, 0.0, 1.4],
+    "dimension_order": ["length", "height", "width"],
+    "max_dimension": 3.0,
+    "min_dimension": 2.0,
+    "aspect_ratio_hint": "compact",
+    "volume_estimate_bbox": 16.8,
+    "is_ground_contact_likely": true,
+    "is_multi_mesh": false,
+    "mesh_count": 1,
+    "points_count_total": 3280,
+    "face_count_total": 1640,
+    "shape_hints": {
+      "is_box_like": true,
+      "is_flat": false,
+      "is_tall": false,
+      "is_elongated": false
+    }
+  },
+  "physics_values": {
+    "has_rigid_body": true,
+    "has_collision": true,
+    "has_mass": true,
+    "has_physics_material": false,
+    "rigid_body_paths": ["/Forklift"],
+    "collision_paths": ["/Forklift/Body"],
+    "mass_paths": ["/Forklift"],
+    "mass_values": [],
+    "density_values": [],
+    "center_of_mass_values": [],
+    "diagonal_inertia_values": [],
+    "collision_approximations": [],
+    "physics_material_params": []
+  },
+  "collider_recommendation": {
+    "recommended": "convexHull",
+    "basis": [
+      "single mesh detected",
+      "shape_hints.is_box_like is true"
+    ],
+    "confidence": 0.92
+  },
+  "physics_profile_candidates": [
+    {
+      "profile": "wheeled_rigid_vehicle",
+      "source": "rule_heuristic",
+      "basis": [
+        "semantic candidate indicates forklift/industrial_vehicle",
+        "rigid body, collision, and mass are present"
+      ],
+      "confidence": 0.93
+    }
+  ],
+  "simready_completeness": {
+    "geometry": "present",
+    "render_material": "present",
+    "physics_schema": "present",
+    "physics_values": "partial",
+    "physics_material": "missing",
+    "semantic_label": "present",
+    "overall": "high",
+    "basis": [
+      "geometry=present",
+      "render_material=present",
+      "physics_schema=present",
+      "physics_values=partial",
+      "physics_material=missing",
+      "semantic_label=present"
+    ]
+  },
+  "review_flags": [
+    "collision_present_without_approximation",
+    "mass_schema_without_value",
+    "missing_physics_material"
+  ]
+}

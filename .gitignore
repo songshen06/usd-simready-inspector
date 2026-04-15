@@ -1,0 +1,23 @@
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+
+# Local generated outputs
+inspection_reports/
+csv_exports/
+taxonomy_seed_output/
+group_reference_output/
+
+# Local temp/debug files
+*.log
+*.tmp
+
+# Keep published sample assets and sample JSON/CSV files tracked.

@@ -1,0 +1,2 @@
+asset_id,file,mesh_path,render_materials,subset_materials,has_collider,collider_schema,collider_approximation,has_physics_material,physics_materials,points_count,face_count,bbox_x,bbox_y,bbox_z
+forklift,/data/assets/forklift.usdz,/Forklift/Body,/Forklift/Looks/Paint,/Forklift/Looks/Rubber,True,UsdPhysics.CollisionAPI,,False,,3280,1640,3.0,2.0,2.8
