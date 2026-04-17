@@ -112,6 +112,11 @@ This repository includes a published furniture reference with SimReady semantic 
 
 - `simready_furniture_reference_with_wikidata.json`
 
+This is now the recommended default reference because it includes authored
+SimReady semantic metadata such as `qcodes`, `classes`, `hierarchies`, and
+`label_tags`. In practice this improves furniture recovery and makes reference
+grouping more stable than the older naming-driven sample reference.
+
 Run:
 
 ```bash
@@ -200,8 +205,17 @@ Included samples:
 - `sample_asset_summary.csv`
 - `sample_component_map.csv`
 - `sample_candidate_review.csv`
-- `sample_static_furniture_reference.json`
 - `simready_furniture_reference_with_wikidata.json`
+
+Legacy sample:
+
+- `sample_static_furniture_reference.json`
+
+Why the new reference is preferred:
+
+- it contains more assets and more furniture assets
+- it captures SimReady semantic metadata authored in the source USD assets
+- it improves furniture classification coverage compared with the older sample reference
 
 ## Documentation
 
