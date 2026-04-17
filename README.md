@@ -148,7 +148,7 @@ python3 extract_static_furniture_reference.py \
 
 ```bash
 python3 compare_reference_recommendations.py \
-  sample_static_furniture_reference.json \
+  legacy/sample_static_furniture_reference.json \
   simready_furniture_reference_with_wikidata.json \
   /path/to/chair.usd \
   /path/to/bottle.usd \
@@ -207,9 +207,9 @@ Included samples:
 - `sample_candidate_review.csv`
 - `simready_furniture_reference_with_wikidata.json`
 
-Legacy sample:
+Legacy baseline kept only for regression comparison and historical reproducibility:
 
-- `sample_static_furniture_reference.json`
+- `legacy/sample_static_furniture_reference.json`
 
 Why the new reference is preferred:
 
