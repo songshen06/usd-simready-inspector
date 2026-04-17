@@ -108,15 +108,15 @@ python3 report_to_knowledge_candidate.py asset.report.json --output asset.knowle
 
 ### 3. Generate a static furniture recommendation
 
-This repository includes a published sample furniture reference:
+This repository includes a published furniture reference with SimReady semantic metadata:
 
-- `sample_static_furniture_reference.json`
+- `simready_furniture_reference_with_wikidata.json`
 
 Run:
 
 ```bash
 python3 recommend_static_furniture_simready.py \
-  sample_static_furniture_reference.json \
+  simready_furniture_reference_with_wikidata.json \
   /path/to/new_asset.usd \
   --output new_asset.static_furniture_recommendation.json
 ```
@@ -201,6 +201,7 @@ Included samples:
 - `sample_component_map.csv`
 - `sample_candidate_review.csv`
 - `sample_static_furniture_reference.json`
+- `simready_furniture_reference_with_wikidata.json`
 
 ## Documentation
 
