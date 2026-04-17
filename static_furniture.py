@@ -88,6 +88,14 @@ def _collect_name_tokens(report: Dict[str, Any], knowledge: Dict[str, Any]) -> s
         _top_candidate_label(knowledge.get("semantic_candidates", []) or [], "label"),
         ((report.get("stage", {}) or {}).get("default_prim") or ""),
     ]
+    for item in knowledge.get("semantic_candidates", []) or []:
+        label = item.get("label")
+        if label:
+            parts.append(str(label))
+    semantic_metadata = knowledge.get("semantic_metadata", {}) or {}
+    for key in ("classes", "hierarchies", "label_tags", "anchor_tags"):
+        for value in semantic_metadata.get(key, []) or []:
+            parts.append(str(value))
     metadata = report.get("metadata", {}) or {}
     for item in metadata.get("display_names", []) or []:
         parts.append(item.get("display_name", ""))
@@ -99,6 +107,11 @@ def classify_furniture_class(report: Dict[str, Any], knowledge: Dict[str, Any]) 
     basis: List[str] = []
 
     keyword_map = [
+        ("tableware", "decor"),
+        ("kitchenware", "decor"),
+        ("utensil", "decor"),
+        ("vase", "decor"),
+        ("bowl", "decor"),
         ("armchair", "chair"),
         ("diningchair", "chair"),
         ("chair", "chair"),
@@ -119,8 +132,6 @@ def classify_furniture_class(report: Dict[str, Any], knowledge: Dict[str, Any]) 
         ("storage", "storage"),
         ("shelf", "shelf"),
         ("bookcase", "shelf"),
-        ("vase", "decor"),
-        ("bowl", "decor"),
         ("decor", "decor"),
         ("skull", "decor"),
     ]
@@ -219,6 +230,7 @@ def recommend_static_collider(
     support_structure: Dict[str, Any],
 ) -> Dict[str, Any]:
     geometry = knowledge.get("geometry_features", {}) or {}
+    physics = knowledge.get("physics_values", {}) or {}
     shape_hints = (geometry.get("shape_hints", {}) or {})
     primary_mesh_count = int(geometry.get("primary_mesh_count") or geometry.get("mesh_count") or 0)
     face_count_total = int(geometry.get("face_count_total") or 0)
@@ -233,12 +245,26 @@ def recommend_static_collider(
             "basis": ["no primary mesh detected"],
         }
 
+    if physics.get("guide_collider_paths") and "none" in set(physics.get("collision_approximations") or []):
+        return {
+            "approximation": "none",
+            "scope": "per_component",
+            "confidence": 0.97,
+            "basis": [
+                "guide-purpose collider mesh detected",
+                "existing collider uses no approximation",
+            ],
+        }
+
     if furniture_class in {"cabinet", "storage", "shelf"} and shape_hints.get("is_box_like"):
         return {
-            "approximation": "boundingCube",
+            "approximation": "convexHull",
             "scope": "whole_asset",
-            "confidence": 0.88,
-            "basis": ["box-like storage furniture detected"],
+            "confidence": 0.84,
+            "basis": [
+                "box-like storage furniture detected",
+                "convex hull is safer than a coarse bounding cube for furniture silhouettes",
+            ],
         }
 
     if furniture_class in {"table", "desk"} and support_structure.get("support_surface_likely"):
@@ -280,7 +306,7 @@ def recommend_static_collider(
             "approximation": "meshSimplified",
             "scope": "whole_asset",
             "confidence": 0.7,
-            "basis": ["geometry appears flat"],
+            "basis": ["geometry appears flat", "flat static surfaces can preserve support area with simplified mesh"],
         }
 
     if primary_mesh_count > 1:
@@ -326,6 +352,7 @@ def build_static_furniture_asset_reference(
         "is_furniture": is_furniture,
         "furniture_class": furniture_class,
         "furniture_basis": furniture_basis,
+        "semantic_metadata": knowledge.get("semantic_metadata", {}) or {},
         "material_family": top_material,
         "size": size_features,
         "support_structure": support_structure,

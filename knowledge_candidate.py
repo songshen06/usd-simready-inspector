@@ -69,10 +69,47 @@ def _collect_name_signals(report: Dict[str, Any]) -> List[Tuple[str, str]]:
         if value:
             signals.append((str(value), "metadata.model_metadata.asset_name"))
 
+    for item in metadata.get("semantic_entries", []) or []:
+        semantic_data = item.get("semantic_data")
+        semantic_type = item.get("semantic_type")
+        if semantic_data:
+            signals.append((str(semantic_data), f"metadata.semantic_entries.{semantic_type or 'unknown'}"))
+
     basename = _basename_without_ext(file_path)
     if basename:
         signals.append((basename, "file.basename"))
     return signals
+
+
+def extract_semantic_metadata(report: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = report.get("metadata", {}) or {}
+    result = {
+        "qcodes": [],
+        "classes": [],
+        "hierarchies": [],
+        "label_tags": [],
+        "anchor_tags": [],
+        "entries": metadata.get("semantic_entries", []) or [],
+    }
+    for entry in metadata.get("semantic_entries", []) or []:
+        semantic_type = str(entry.get("semantic_type") or "").strip().lower()
+        semantic_data = str(entry.get("semantic_data") or "").strip()
+        if not semantic_data:
+            continue
+        values = [part.strip() for part in semantic_data.split(",") if part.strip()]
+        if semantic_type == "qcode":
+            result["qcodes"].extend(values)
+        elif semantic_type == "class":
+            result["classes"].extend(values)
+        elif semantic_type == "hierarchy":
+            result["hierarchies"].extend(values)
+        elif semantic_type == "labeltag":
+            result["label_tags"].extend(values)
+        elif semantic_type == "anchortag":
+            result["anchor_tags"].extend(values)
+    for key in ("qcodes", "classes", "hierarchies", "label_tags", "anchor_tags"):
+        result[key] = sorted(set(result[key]))
+    return result
 
 
 def _extract_asset_identity(report: Dict[str, Any]) -> Tuple[str, str]:
@@ -359,6 +396,23 @@ def extract_geometry_features(report: Dict[str, Any]) -> Dict[str, Any]:
     auxiliary_mesh_count = len(auxiliary_mesh_prims)
     points_count_total = sum(int(item.get("points_count") or 0) for item in analysis_meshes)
     face_count_total = sum(int(item.get("face_vertex_counts_count") or 0) for item in analysis_meshes)
+    purpose_counts: Dict[str, int] = {}
+    subdivision_scheme_counts: Dict[str, int] = {}
+    guide_mesh_count = 0
+    render_or_default_mesh_count = 0
+    subdivision_non_default_count = 0
+
+    for mesh in mesh_roles:
+        purpose = str(mesh.get("purpose") or "default")
+        subdivision_scheme = str(mesh.get("subdivision_scheme") or "unknown")
+        purpose_counts[purpose] = purpose_counts.get(purpose, 0) + 1
+        subdivision_scheme_counts[subdivision_scheme] = subdivision_scheme_counts.get(subdivision_scheme, 0) + 1
+        if purpose == "guide":
+            guide_mesh_count += 1
+        if purpose in {"default", "render"}:
+            render_or_default_mesh_count += 1
+        if subdivision_scheme not in {"unknown", "none"}:
+            subdivision_non_default_count += 1
 
     max_dimension = None
     min_dimension = None
@@ -406,6 +460,11 @@ def extract_geometry_features(report: Dict[str, Any]) -> Dict[str, Any]:
         "points_count_total": points_count_total,
         "face_count_total": face_count_total,
         "bbox_may_include_auxiliary_mesh": auxiliary_mesh_count > 0,
+        "purpose_counts": purpose_counts,
+        "subdivision_scheme_counts": subdivision_scheme_counts,
+        "guide_mesh_count": guide_mesh_count,
+        "render_or_default_mesh_count": render_or_default_mesh_count,
+        "subdivision_non_default_count": subdivision_non_default_count,
         "shape_hints": geometry.get("shape_hints", {}) or {},
     }
 
@@ -432,10 +491,21 @@ def extract_physics_values(report: Dict[str, Any]) -> Dict[str, Any]:
     physics_material_bindings = materials.get("physics_material_bindings", []) or []
 
     collision_approximations: List[Any] = []
+    static_collision_paths: List[str] = []
+    dynamic_collision_paths: List[str] = []
+    collider_purposes: List[str] = []
+    guide_collider_paths: List[str] = []
+    approximation_distribution: Dict[str, int] = {}
     for item in colliders:
         approximation = item.get("approximation")
         if approximation is not None:
             collision_approximations.append(approximation)
+            approximation_key = str(approximation)
+            approximation_distribution[approximation_key] = approximation_distribution.get(approximation_key, 0) + 1
+        if item.get("is_static_collider") and item.get("path"):
+            static_collision_paths.append(item.get("path"))
+        if item.get("body_type") == "dynamic_or_kinematic" and item.get("path"):
+            dynamic_collision_paths.append(item.get("path"))
 
     physics_material_params: List[Dict[str, Any]] = []
     for item in physics_material_bindings:
@@ -451,14 +521,31 @@ def extract_physics_values(report: Dict[str, Any]) -> Dict[str, Any]:
         physics_material_params.append(params)
 
     collision_enabled_values = _collect_value_arrays(colliders, "collision_enabled")
+    mesh_by_path = {
+        item.get("path"): item
+        for item in (report.get("geometry", {}) or {}).get("mesh_prims", []) or []
+        if item.get("path")
+    }
+    for collider_path in static_collision_paths + dynamic_collision_paths:
+        mesh = mesh_by_path.get(collider_path)
+        if not mesh:
+            continue
+        purpose = mesh.get("purpose")
+        if purpose is not None:
+            collider_purposes.append(str(purpose))
+        if str(purpose or "") == "guide":
+            guide_collider_paths.append(collider_path)
 
     return {
+        "scene_paths": _paths(physics.get("scenes", []) or []),
         "has_rigid_body": bool(rigid_bodies),
         "has_collision": bool(colliders),
         "has_mass": bool(mass_api),
         "has_physics_material": bool(physics_material_bindings),
         "rigid_body_paths": _paths(rigid_bodies),
         "collision_paths": _paths(colliders),
+        "static_collision_paths": static_collision_paths,
+        "dynamic_collision_paths": dynamic_collision_paths,
         "mass_paths": _paths(mass_api),
         "mass_values": _collect_value_arrays(mass_api, "mass"),
         "density_values": _collect_value_arrays(mass_api, "density"),
@@ -466,7 +553,12 @@ def extract_physics_values(report: Dict[str, Any]) -> Dict[str, Any]:
         "diagonal_inertia_values": _collect_value_arrays(mass_api, "diagonal_inertia"),
         "principal_axes_values": _collect_value_arrays(mass_api, "principal_axes"),
         "collision_approximations": collision_approximations,
+        "collision_approximation_distribution": approximation_distribution,
         "collision_enabled_values": collision_enabled_values,
+        "static_collider_count": int(physics.get("static_collider_count") or 0),
+        "dynamic_collider_count": int(physics.get("dynamic_collider_count") or 0),
+        "collider_purposes": collider_purposes,
+        "guide_collider_paths": guide_collider_paths,
         "physics_material_params": physics_material_params,
     }
 
@@ -491,6 +583,37 @@ def infer_semantic_candidates(report: Dict[str, Any]) -> List[Dict[str, Any]]:
     }
 
     candidates: List[Dict[str, Any]] = []
+    semantic_metadata = extract_semantic_metadata(report)
+
+    for qcode in semantic_metadata.get("qcodes", []):
+        candidates.append(
+            {
+                "label": qcode,
+                "source": "metadata.semantic_entries.qcode",
+                "basis": [f"semantic qcode authored on asset: {qcode}"],
+                "confidence": 0.99,
+            }
+        )
+
+    for field_name, values, confidence in (
+        ("class", semantic_metadata.get("classes", []), 0.97),
+        ("hierarchy", semantic_metadata.get("hierarchies", []), 0.95),
+        ("label_tag", semantic_metadata.get("label_tags", []), 0.93),
+        ("anchor_tag", semantic_metadata.get("anchor_tags", []), 0.9),
+    ):
+        for value in values:
+            normalized = _normalize_text(value).replace("/", "_")
+            if not normalized:
+                continue
+            candidates.append(
+                {
+                    "label": normalized,
+                    "source": f"metadata.semantic_entries.{field_name}",
+                    "basis": [f"semantic {field_name} authored on asset: {value}"],
+                    "confidence": confidence,
+                }
+            )
+
     signals = _collect_name_signals(report)
     for raw_value, source in signals:
         normalized = _normalize_text(raw_value)
@@ -612,9 +735,10 @@ def infer_material_family_candidates(report: Dict[str, Any]) -> List[Dict[str, A
 
 def infer_collider_recommendation(report: Dict[str, Any], geometry_features: Dict[str, Any]) -> Dict[str, Any]:
     """Recommend collider strategy using only report-driven heuristics."""
-    mesh_count = int(geometry_features.get("mesh_count") or 0)
+    mesh_count = int(geometry_features.get("primary_mesh_count") or geometry_features.get("mesh_count") or 0)
     shape_hints = geometry_features.get("shape_hints", {}) or {}
     aspect_ratio_hint = geometry_features.get("aspect_ratio_hint")
+    physics_values = extract_physics_values(report)
     basis: List[str] = []
 
     if mesh_count == 0:
@@ -622,6 +746,12 @@ def infer_collider_recommendation(report: Dict[str, Any], geometry_features: Dic
             "recommended": "none",
             "basis": ["geometry_features.mesh_count is 0"],
             "confidence": 0.98,
+        }
+    if physics_values.get("guide_collider_paths") and "none" in set(physics_values.get("collision_approximations") or []):
+        return {
+            "recommended": "none",
+            "basis": ["guide-purpose collider mesh detected", "authored collider uses no approximation"],
+            "confidence": 0.97,
         }
     if mesh_count == 1 and shape_hints.get("is_box_like"):
         return {
@@ -820,6 +950,7 @@ def build_knowledge_candidate(report: Dict[str, Any], variant_role_override: Opt
     )
 
     semantic_candidates = infer_semantic_candidates(report)
+    semantic_metadata = extract_semantic_metadata(report)
     material_family_candidates = infer_material_family_candidates(report)
     structure_pattern = extract_structure_pattern(report)
     component_map = build_component_map(report)
@@ -834,6 +965,7 @@ def build_knowledge_candidate(report: Dict[str, Any], variant_role_override: Opt
         "asset_name_source": _extract_asset_identity(report)[1],
         "file": file_path,
         "asset_variant_role": variant_role,
+        "semantic_metadata": semantic_metadata,
         "semantic_candidates": semantic_candidates,
         "material_family_candidates": material_family_candidates,
         "structure_pattern": structure_pattern,

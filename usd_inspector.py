@@ -214,6 +214,43 @@ def _get_variant_sets(prim: Usd.Prim) -> List[Dict[str, Any]]:
     return variants
 
 
+def _collect_semantic_attrs(prim: Usd.Prim) -> List[Dict[str, Any]]:
+    entries: List[Dict[str, Any]] = []
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for attr in prim.GetAttributes():
+        try:
+            name = str(attr.GetName())
+        except Exception:
+            continue
+        if not name.startswith("semantic:"):
+            continue
+        parts = name.split(":")
+        if len(parts) < 4:
+            continue
+        key = ":".join(parts[:-1])
+        field_name = parts[-1]
+        entry = grouped.setdefault(
+            key,
+            {
+                "path": prim.GetPath().pathString,
+                "semantic_key": parts[1],
+                "namespace": key,
+                "semantic_data": None,
+                "semantic_type": None,
+            },
+        )
+        if field_name == "semanticData":
+            entry["semantic_data"] = _get_attr_value(attr)
+        elif field_name == "semanticType":
+            entry["semantic_type"] = _get_attr_value(attr)
+
+    for item in grouped.values():
+        if item.get("semantic_data") is None and item.get("semantic_type") is None:
+            continue
+        entries.append(item)
+    return entries
+
+
 def _get_applied_schema_names(prim: Usd.Prim) -> List[str]:
     try:
         return [str(name) for name in prim.GetAppliedSchemas()]
@@ -268,6 +305,13 @@ def inspect_stage(stage: Usd.Stage, input_path: str, max_prims: int = 0) -> Dict
     except Exception:
         meters_per_unit = None
 
+    kilograms_per_unit = None
+    if UsdPhysics is not None:
+        try:
+            kilograms_per_unit = _safe_float(UsdPhysics.GetStageKilogramsPerUnit(stage))
+        except Exception:
+            kilograms_per_unit = None
+
     schema_counts: Dict[str, int] = {}
     kinds = set()
     prim_records: List[Dict[str, Any]] = []
@@ -309,6 +353,7 @@ def inspect_stage(stage: Usd.Stage, input_path: str, max_prims: int = 0) -> Dict
             "default_prim": default_prim.GetPath().pathString if default_prim else None,
             "up_axis": up_axis_value,
             "meters_per_unit": meters_per_unit,
+            "kilograms_per_unit": kilograms_per_unit,
             "start_time_code": _safe_float(stage.GetStartTimeCode()),
             "end_time_code": _safe_float(stage.GetEndTimeCode()),
             "frames_per_second": _safe_float(stage.GetFramesPerSecond()),
@@ -393,6 +438,10 @@ def inspect_geometry(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
         face_vertex_indices_count = None
         local_bbox = None
         world_bbox = None
+        purpose = None
+        visibility = None
+        subdivision_scheme = None
+        orientation = None
 
         try:
             points = mesh.GetPointsAttr().Get()
@@ -425,6 +474,26 @@ def inspect_geometry(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
         has_st = "st" in primvar_names
 
         try:
+            purpose = _to_serializable(UsdGeom.Imageable(prim).GetPurposeAttr().Get())
+        except Exception:
+            purpose = None
+
+        try:
+            visibility = _to_serializable(UsdGeom.Imageable(prim).GetVisibilityAttr().Get())
+        except Exception:
+            visibility = None
+
+        try:
+            subdivision_scheme = _to_serializable(mesh.GetSubdivisionSchemeAttr().Get())
+        except Exception:
+            subdivision_scheme = None
+
+        try:
+            orientation = _to_serializable(mesh.GetOrientationAttr().Get())
+        except Exception:
+            orientation = None
+
+        try:
             local_bound = bbox_cache.ComputeLocalBound(prim)
             local_bbox = _bbox_to_dict(local_bound)
             if local_bound:
@@ -449,6 +518,10 @@ def inspect_geometry(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
             "has_normals": has_normals,
             "has_st": has_st,
             "primvars": primvar_names,
+            "purpose": purpose,
+            "visibility": visibility,
+            "subdivision_scheme": subdivision_scheme,
+            "orientation": orientation,
             "bbox_local": local_bbox,
             "bbox_world": world_bbox,
         }
@@ -626,6 +699,41 @@ def _append_if_schema(result_list: List[Dict[str, Any]], prim: Usd.Prim, schema_
     return True
 
 
+def _path_has_prefix(path: str, prefix: str) -> bool:
+    return path == prefix or path.startswith(prefix + "/")
+
+
+def _nearest_rigid_body_ancestor(prim: Usd.Prim, rigid_body_paths: List[str]) -> Optional[str]:
+    current = prim
+    while current and current.IsValid():
+        current_path = current.GetPath().pathString
+        if current_path in rigid_body_paths:
+            return current_path
+        current = current.GetParent()
+    return None
+
+
+def _nearest_physics_scene(stage: Usd.Stage, prim: Usd.Prim) -> Optional[str]:
+    if UsdPhysics is None:
+        return None
+    try:
+        current = prim
+        while current and current.IsValid():
+            if current.IsA(UsdPhysics.Scene):
+                return current.GetPath().pathString
+            current = current.GetParent()
+    except Exception:
+        return None
+
+    try:
+        scenes = [item for item in stage.Traverse() if item.IsA(UsdPhysics.Scene)]
+        if len(scenes) == 1:
+            return scenes[0].GetPath().pathString
+    except Exception:
+        return None
+    return None
+
+
 def inspect_physics(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
     """Inspect USD physics APIs and common joint schemas."""
     rigid_bodies: List[Dict[str, Any]] = []
@@ -633,8 +741,10 @@ def inspect_physics(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
     mass_api: List[Dict[str, Any]] = []
     articulations: List[Dict[str, Any]] = []
     joints: List[Dict[str, Any]] = []
+    scenes: List[Dict[str, Any]] = []
     physics_schemas_detected = set()
     physx_entries: List[Dict[str, Any]] = []
+    prims = _iter_prims(stage, max_prims=max_prims)
 
     joint_schema_names = [
         "Joint",
@@ -646,7 +756,30 @@ def inspect_physics(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
         "D6Joint",
     ]
 
-    for prim in _iter_prims(stage, max_prims=max_prims):
+    if UsdPhysics is not None:
+        for prim in prims:
+            if prim.IsA(UsdPhysics.Scene):
+                scene = UsdPhysics.Scene(prim)
+                gravity_direction = None
+                gravity_magnitude = None
+                try:
+                    gravity_direction = _to_serializable(scene.GetGravityDirectionAttr().Get())
+                except Exception:
+                    gravity_direction = None
+                try:
+                    gravity_magnitude = _safe_float(scene.GetGravityMagnitudeAttr().Get())
+                except Exception:
+                    gravity_magnitude = None
+                scenes.append(
+                    {
+                        "path": prim.GetPath().pathString,
+                        "gravity_direction": gravity_direction,
+                        "gravity_magnitude": gravity_magnitude,
+                    }
+                )
+                physics_schemas_detected.add("UsdPhysics.Scene")
+
+    for prim in prims:
         applied_names = _get_applied_schema_names(prim)
         for name in applied_names:
             lowered = name.lower()
@@ -654,11 +787,62 @@ def inspect_physics(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
                 physics_schemas_detected.add(name)
 
         if UsdPhysics is not None:
-            if _append_if_schema(rigid_bodies, prim, getattr(UsdPhysics, "RigidBodyAPI", None), "UsdPhysics.RigidBodyAPI"):
+            rigid_body_applied = _schema_applied(prim, getattr(UsdPhysics, "RigidBodyAPI", None))
+            if rigid_body_applied:
+                rigid_body_api = UsdPhysics.RigidBodyAPI(prim)
+                simulation_owner = None
+                try:
+                    targets = rigid_body_api.GetSimulationOwnerRel().GetTargets()
+                    if targets:
+                        simulation_owner = targets[0].pathString
+                except Exception:
+                    simulation_owner = None
+                rigid_bodies.append(
+                    {
+                        "path": prim.GetPath().pathString,
+                        "schema": "UsdPhysics.RigidBodyAPI",
+                        "rigid_body_enabled": _get_attr_value(rigid_body_api.GetRigidBodyEnabledAttr()),
+                        "kinematic_enabled": _get_attr_value(rigid_body_api.GetKinematicEnabledAttr()),
+                        "starts_asleep": _get_attr_value(rigid_body_api.GetStartsAsleepAttr()),
+                        "simulation_owner": simulation_owner,
+                    }
+                )
                 physics_schemas_detected.add("UsdPhysics.RigidBodyAPI")
-            if _append_if_schema(colliders, prim, getattr(UsdPhysics, "CollisionAPI", None), "UsdPhysics.CollisionAPI"):
+            collision_applied = _schema_applied(prim, getattr(UsdPhysics, "CollisionAPI", None))
+            if collision_applied:
+                collision_api = UsdPhysics.CollisionAPI(prim)
+                mesh_collision_api = None
+                approximation = None
+                if prim.IsA(UsdGeom.Mesh) and _schema_applied(prim, getattr(UsdPhysics, "MeshCollisionAPI", None)):
+                    mesh_collision_api = UsdPhysics.MeshCollisionAPI(prim)
+                    try:
+                        approximation = _to_serializable(mesh_collision_api.GetApproximationAttr().Get())
+                    except Exception:
+                        approximation = None
+                colliders.append(
+                    {
+                        "path": prim.GetPath().pathString,
+                        "schema": "UsdPhysics.CollisionAPI",
+                        "collision_enabled": _get_attr_value(collision_api.GetCollisionEnabledAttr()),
+                        "approximation": approximation,
+                        "has_mesh_collision_api": bool(mesh_collision_api),
+                    }
+                )
                 physics_schemas_detected.add("UsdPhysics.CollisionAPI")
-            if _append_if_schema(mass_api, prim, getattr(UsdPhysics, "MassAPI", None), "UsdPhysics.MassAPI"):
+            mass_applied = _schema_applied(prim, getattr(UsdPhysics, "MassAPI", None))
+            if mass_applied:
+                mass = UsdPhysics.MassAPI(prim)
+                mass_api.append(
+                    {
+                        "path": prim.GetPath().pathString,
+                        "schema": "UsdPhysics.MassAPI",
+                        "mass": _get_attr_value(mass.GetMassAttr()),
+                        "density": _get_attr_value(mass.GetDensityAttr()),
+                        "center_of_mass": _get_attr_value(mass.GetCenterOfMassAttr()),
+                        "diagonal_inertia": _get_attr_value(mass.GetDiagonalInertiaAttr()),
+                        "principal_axes": _get_attr_value(mass.GetPrincipalAxesAttr()),
+                    }
+                )
                 physics_schemas_detected.add("UsdPhysics.MassAPI")
             if _append_if_schema(articulations, prim, getattr(UsdPhysics, "ArticulationRootAPI", None), "UsdPhysics.ArticulationRootAPI"):
                 physics_schemas_detected.add("UsdPhysics.ArticulationRootAPI")
@@ -691,13 +875,45 @@ def inspect_physics(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
                     physx_entries.append(entry)
                     physics_schemas_detected.add(f"PhysxSchema.{attr_name}")
 
+    rigid_body_paths = [item.get("path") for item in rigid_bodies if item.get("path")]
+    rigid_body_paths_set = set(rigid_body_paths)
+    dynamic_collider_count = 0
+    static_collider_count = 0
+    for collider in colliders:
+        collider_path = collider.get("path") or ""
+        prim = stage.GetPrimAtPath(collider_path)
+        rigid_body_ancestor = _nearest_rigid_body_ancestor(prim, rigid_body_paths) if prim and prim.IsValid() else None
+        subtree_root = rigid_body_ancestor
+        nested_under_other = False
+        if rigid_body_ancestor:
+            for other_path in rigid_body_paths_set:
+                if other_path == rigid_body_ancestor:
+                    continue
+                if _path_has_prefix(rigid_body_ancestor, other_path):
+                    nested_under_other = True
+                    break
+        body_type = "dynamic_or_kinematic" if rigid_body_ancestor else "static"
+        if body_type == "static":
+            static_collider_count += 1
+        else:
+            dynamic_collider_count += 1
+        collider["rigid_body_ancestor"] = rigid_body_ancestor
+        collider["body_type"] = body_type
+        collider["is_static_collider"] = body_type == "static"
+        collider["is_rigid_body_root"] = collider_path in rigid_body_paths_set
+        collider["nested_rigid_body_root"] = nested_under_other
+        collider["simulation_owner"] = _nearest_physics_scene(stage, prim) if prim and prim.IsValid() else None
+
     return {
+        "scenes": scenes,
         "rigid_bodies": rigid_bodies,
         "colliders": colliders,
         "mass_api": mass_api,
         "articulations": articulations,
         "joints": joints,
         "physx": physx_entries,
+        "static_collider_count": static_collider_count,
+        "dynamic_collider_count": dynamic_collider_count,
         "physics_schemas_detected": sorted(physics_schemas_detected),
         "physics_profile_candidates": [],
     }
@@ -712,6 +928,7 @@ def inspect_metadata(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
     docs: List[Dict[str, Any]] = []
     display_names: List[Dict[str, Any]] = []
     model_metadata: List[Dict[str, Any]] = []
+    semantic_entries: List[Dict[str, Any]] = []
 
     default_prim = stage.GetDefaultPrim()
     if default_prim:
@@ -748,6 +965,7 @@ def inspect_metadata(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
             display_names.append({"path": prim.GetPath().pathString, "display_name": display_name})
 
         variant_sets.extend(_get_variant_sets(prim))
+        semantic_entries.extend(_collect_semantic_attrs(prim))
 
         try:
             model_api = Usd.ModelAPI(prim)
@@ -771,6 +989,7 @@ def inspect_metadata(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
         "documentation": docs,
         "display_names": display_names,
         "model_metadata": model_metadata,
+        "semantic_entries": semantic_entries,
         "semantic_candidates": [],
     }
 
