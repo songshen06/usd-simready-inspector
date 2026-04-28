@@ -54,11 +54,13 @@ Practical impact:
 
 - Extracts a furniture reference JSON from a USD library
 - Uses `reference JSON + new USD` to produce:
+  - Stage 1 furniture/decor classification
   - furniture class
+  - review-required risk tag
   - material family
-  - size features
+  - real-size `size.bbox` and `size.footprint` in centimeters
   - support structure features
-  - collider recommendation
+  - collision plan with collider type, target mesh paths, and auto-apply safety
   - size recommendation
 - Applies conservative static collider settings back to USD
 
@@ -90,6 +92,7 @@ python3 -c "from pxr import Usd; print('USD OK')"
 - `extract_static_furniture_reference.py`
 - `recommend_static_furniture_simready.py`
 - `apply_static_furniture_simready.py`
+- `smoke_test_static_furniture_runtime.py`
 - `compare_reference_recommendations.py`
 
 ## Quick Start
@@ -135,7 +138,37 @@ python3 apply_static_furniture_simready.py \
   --output new_asset.simready_static.usda
 ```
 
-### 5. Build a reference with SimReady semantic metadata
+The authoring step scans all authored USD asset-path fields, including MDL
+shader fields such as `info:mdl:sourceAsset`. Resolvable relative dependencies
+are copied next to the output USD with the same relative layout. If an upstream
+asset references `gltf/pbr.mdl` but omitted the file, the bundled fallback MDL
+is written to `gltf/pbr.mdl` in the output directory so downstream validators
+can resolve the shader source asset. Other missing relative dependencies still
+fail the command unless `--allow-missing-assets` is used. Exported USDA files
+are normalized so copied assets, including textures, are authored as relative
+paths such as `textures/name.png` instead of machine-local absolute paths.
+When the recommendation includes `authoring.apply_reference_scale=true`, the
+authoring step also applies `authoring.suggested_uniform_scale` to the default
+prim so assets with incorrect source scale are normalized against the trusted
+reference library.
+
+### 5. Run a top-drop runtime smoke test
+
+For assets where `recommendation.collision_plan.auto_apply_safe=true` and
+`recommendation.review_required=false`, pass the recommendation to
+`omni-asset-cli top-drop` with preserve-runtime enabled:
+
+```bash
+python3 smoke_test_static_furniture_runtime.py \
+  new_asset.static_furniture_recommendation.json \
+  --output new_asset.top_drop_smoke.json
+```
+
+Use `--dry-run` to inspect the command without invoking `omni-asset-cli`.
+If your local CLI uses different argument names, provide `--command-template`;
+the template supports `{input}`, `{recommendation}`, and `{output}`.
+
+### 6. Build a reference with SimReady semantic metadata
 
 ```bash
 python3 extract_static_furniture_reference.py \
@@ -144,7 +177,7 @@ python3 extract_static_furniture_reference.py \
   --output simready_furniture_reference_with_wikidata.json
 ```
 
-### 6. Compare old vs new reference recommendations
+### 7. Compare old vs new reference recommendations
 
 ```bash
 python3 compare_reference_recommendations.py \
@@ -160,10 +193,15 @@ python3 compare_reference_recommendations.py \
 
 The static furniture recommendation currently focuses on:
 
+- `is_furniture`
 - `furniture_class`
-- `material_family`
-- `size`
+- `is_decor`
+- `review_required`
+- `size.bbox`
+- `size.footprint`
 - `support_structure`
+- `collision_plan`
+- `material_family`
 - `recommended_collider`
 - `size_recommendation`
 - `authoring.target_mesh_paths`
@@ -175,6 +213,7 @@ Current authoring behavior is intentionally conservative:
 - applies `PhysicsMeshCollisionAPI`
 - writes `physics:collisionEnabled = true`
 - writes `physics:approximation = ...`
+- only marks recommendations auto-apply safe when size, mesh targets, and Stage 1 classification are suitable for downstream runtime smoke testing
 
 It does not currently auto-author:
 
@@ -182,7 +221,6 @@ It does not currently auto-author:
 - articulations
 - vehicles
 - friction, mass, density, restitution tuning
-- geometry rescaling
 
 ## Semantic Metadata
 

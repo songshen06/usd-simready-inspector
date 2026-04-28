@@ -29,6 +29,8 @@ FURNITURE_CLASSES = {
 }
 
 USD_SUFFIXES = (".usd", ".usda", ".usdc", ".usdz")
+DEFAULT_METERS_PER_UNIT = 0.01
+OUTPUT_SIZE_UNITS = "cm"
 
 
 def inspect_asset(input_usd: str, max_prims: int = 0) -> Dict[str, Any]:
@@ -67,6 +69,37 @@ def _safe_float(value: Any) -> Optional[float]:
         return float(value)
     except Exception:
         return None
+
+
+def _stage_meters_per_unit(report: Dict[str, Any]) -> float:
+    value = _safe_float((report.get("stage", {}) or {}).get("meters_per_unit"))
+    if value is None or value <= 0:
+        return DEFAULT_METERS_PER_UNIT
+    return value
+
+
+def _stage_up_axis(report: Dict[str, Any]) -> str:
+    value = str((report.get("stage", {}) or {}).get("up_axis") or "Z").upper()
+    return value if value in {"X", "Y", "Z"} else "Z"
+
+
+def _axis_index(axis: str) -> int:
+    return {"X": 0, "Y": 1, "Z": 2}.get(axis.upper(), 2)
+
+
+def _convert_stage_units_to_cm(values: Any, meters_per_unit: float) -> Any:
+    if not isinstance(values, list):
+        return None
+    scale = meters_per_unit * 100.0
+    converted = []
+    for value in values:
+        number = _safe_float(value)
+        converted.append(round(number * scale, 6) if number is not None else None)
+    return converted
+
+
+def _raw_world_bbox(report: Dict[str, Any]) -> Dict[str, Any]:
+    return (((report.get("geometry", {}) or {}).get("bbox", {}) or {}).get("world", {}) or {})
 
 
 def _normalize_text(value: Any) -> str:
@@ -110,6 +143,11 @@ def classify_furniture_class(report: Dict[str, Any], knowledge: Dict[str, Any]) 
         ("tableware", "decor"),
         ("kitchenware", "decor"),
         ("utensil", "decor"),
+        ("coffee_cup", "decor"),
+        ("teacup", "decor"),
+        ("cup", "decor"),
+        ("mug", "decor"),
+        ("drinking_glass", "decor"),
         ("vase", "decor"),
         ("bowl", "decor"),
         ("armchair", "chair"),
@@ -159,43 +197,95 @@ def classify_furniture_class(report: Dict[str, Any], knowledge: Dict[str, Any]) 
     return "non_furniture", False, basis
 
 
-def derive_size_features(knowledge: Dict[str, Any]) -> Dict[str, Any]:
+def derive_size_features(report: Dict[str, Any], knowledge: Dict[str, Any]) -> Dict[str, Any]:
     geometry = knowledge.get("geometry_features", {}) or {}
-    bbox = geometry.get("world_bbox_size")
-    bbox_x = bbox[0] if isinstance(bbox, list) and len(bbox) == 3 else None
-    bbox_y = bbox[1] if isinstance(bbox, list) and len(bbox) == 3 else None
-    bbox_z = bbox[2] if isinstance(bbox, list) and len(bbox) == 3 else None
+    raw_bbox = _raw_world_bbox(report)
+    meters_per_unit = _stage_meters_per_unit(report)
+    up_axis = _stage_up_axis(report)
+    height_axis = _axis_index(up_axis)
+    horizontal_axes = [index for index in range(3) if index != height_axis]
 
-    volume = _safe_float(geometry.get("volume_estimate_bbox"))
+    bbox_stage_size = geometry.get("world_bbox_size")
+    bbox_size_cm = _convert_stage_units_to_cm(bbox_stage_size, meters_per_unit)
+    bbox_min_cm = _convert_stage_units_to_cm(raw_bbox.get("min"), meters_per_unit)
+    bbox_max_cm = _convert_stage_units_to_cm(raw_bbox.get("max"), meters_per_unit)
+    bbox_center_cm = _convert_stage_units_to_cm(raw_bbox.get("center"), meters_per_unit)
+
+    horizontal_sizes = [
+        bbox_size_cm[index]
+        for index in horizontal_axes
+        if isinstance(bbox_size_cm, list) and len(bbox_size_cm) == 3 and bbox_size_cm[index] is not None
+    ]
+
+    legacy_volume = _safe_float(geometry.get("volume_estimate_bbox"))
+    volume_m3 = None
+    if isinstance(bbox_size_cm, list) and len(bbox_size_cm) == 3 and all(_safe_float(item) is not None for item in bbox_size_cm):
+        volume_m3 = 1.0
+        for item in bbox_size_cm:
+            volume_m3 *= float(item) / 100.0
     max_dimension = _safe_float(geometry.get("max_dimension"))
-    height = _safe_float(bbox_z)
+    height = (
+        _safe_float(bbox_size_cm[height_axis])
+        if isinstance(bbox_size_cm, list) and len(bbox_size_cm) == 3
+        else None
+    )
 
-    if volume is None:
+    if volume_m3 is None:
         size_bucket = "unknown"
-    elif volume < 0.1:
+    elif volume_m3 < 0.1:
         size_bucket = "small"
-    elif volume < 1.5:
+    elif volume_m3 < 1.5:
         size_bucket = "medium"
     else:
         size_bucket = "large"
 
     if height is None:
         height_band = "unknown"
-    elif height < 0.5:
+    elif height < 50.0:
         height_band = "low"
-    elif height < 1.2:
+    elif height < 120.0:
         height_band = "mid"
     else:
         height_band = "tall"
 
+    bbox_dict = None
+    if isinstance(bbox_min_cm, list) and isinstance(bbox_max_cm, list) and len(bbox_min_cm) == 3 and len(bbox_max_cm) == 3:
+        bbox_dict = {
+            "min": bbox_min_cm,
+            "max": bbox_max_cm,
+            "size": bbox_size_cm,
+            "center": bbox_center_cm,
+            "units": OUTPUT_SIZE_UNITS,
+            "stage_meters_per_unit": meters_per_unit,
+            "stage_up_axis": up_axis,
+        }
+
+    footprint = None
+    if len(horizontal_sizes) == 2:
+        footprint = {
+            "width": round(max(horizontal_sizes), 6),
+            "depth": round(min(horizontal_sizes), 6),
+            "units": OUTPUT_SIZE_UNITS,
+            "axes": [("X", "Y", "Z")[index] for index in horizontal_axes],
+        }
+
     return {
-        "bbox": bbox if isinstance(bbox, list) else None,
-        "footprint": [bbox_x, bbox_y] if bbox_x is not None and bbox_y is not None else None,
+        "bbox": bbox_dict,
+        "bbox_size": bbox_size_cm if isinstance(bbox_size_cm, list) else None,
+        "footprint": footprint,
         "height_band": height_band,
         "size_bucket": size_bucket,
-        "max_dimension": max_dimension,
+        "height": height,
+        "max_dimension": round(max_dimension * meters_per_unit * 100.0, 6) if max_dimension is not None else None,
         "aspect_ratio_hint": geometry.get("aspect_ratio_hint"),
-        "volume_estimate_bbox": volume,
+        "volume_estimate_m3": round(volume_m3, 9) if volume_m3 is not None else None,
+        "volume_estimate_bbox": legacy_volume,
+        "legacy_bbox_stage_units": bbox_stage_size if isinstance(bbox_stage_size, list) else None,
+        "legacy_footprint_stage_units": (
+            [bbox_stage_size[0], bbox_stage_size[1]]
+            if isinstance(bbox_stage_size, list) and len(bbox_stage_size) == 3
+            else None
+        ),
     }
 
 
@@ -212,8 +302,13 @@ def derive_support_structure(
     backrest_likely = any(token in token_blob for token in ("chair", "sofa", "loveseat", "armchair"))
     legged_likely = furniture_class in {"chair", "table", "desk", "bench", "stool"} or int(geometry.get("primary_mesh_count") or 0) >= 3
     narrow_tall_likely = geometry.get("aspect_ratio_hint") == "tall"
+    shape_hints = geometry.get("shape_hints", {}) or {}
+    stable_on_floor = bool(geometry.get("is_ground_contact_likely")) and not narrow_tall_likely
 
     return {
+        "has_flat_top": bool(support_surface_likely or shape_hints.get("is_flat")),
+        "has_legs": bool(legged_likely),
+        "stable_on_floor": stable_on_floor,
         "ground_contact_likely": geometry.get("is_ground_contact_likely"),
         "support_surface_likely": support_surface_likely,
         "seat_like": seat_like,
@@ -330,7 +425,7 @@ def build_static_furniture_asset_reference(
     knowledge: Dict[str, Any],
 ) -> Dict[str, Any]:
     furniture_class, is_furniture, furniture_basis = classify_furniture_class(report, knowledge)
-    size_features = derive_size_features(knowledge)
+    size_features = derive_size_features(report, knowledge)
     support_structure = derive_support_structure(report, knowledge, furniture_class)
     local_collider = recommend_static_collider(knowledge, furniture_class, support_structure)
     component_map = knowledge.get("component_map", []) or []
@@ -351,6 +446,7 @@ def build_static_furniture_asset_reference(
         "authoring_source_file": authoring_source_file,
         "is_furniture": is_furniture,
         "furniture_class": furniture_class,
+        "is_decor": furniture_class == "decor",
         "furniture_basis": furniture_basis,
         "semantic_metadata": knowledge.get("semantic_metadata", {}) or {},
         "material_family": top_material,
@@ -363,6 +459,7 @@ def build_static_furniture_asset_reference(
             "points_count_total": knowledge.get("geometry_features", {}).get("points_count_total"),
             "face_count_total": knowledge.get("geometry_features", {}).get("face_count_total"),
             "is_multi_mesh": knowledge.get("geometry_features", {}).get("is_multi_mesh"),
+            "shape_hints": knowledge.get("geometry_features", {}).get("shape_hints", {}),
             "target_mesh_paths": primary_mesh_paths,
         },
         "static_collider": local_collider,
@@ -480,17 +577,69 @@ def _median(values: List[float]) -> Optional[float]:
     return (ordered[mid - 1] + ordered[mid]) * 0.5
 
 
+def _bbox_candidate_as_cm(asset_size: Dict[str, Any]) -> Optional[List[float]]:
+    bbox_size = asset_size.get("bbox_size")
+    if isinstance(bbox_size, list) and len(bbox_size) == 3:
+        return [float(item) for item in bbox_size if _safe_float(item) is not None]
+
+    bbox = asset_size.get("bbox")
+    candidate = None
+    if isinstance(bbox, dict):
+        candidate = bbox.get("size")
+    elif isinstance(bbox, list):
+        candidate = bbox
+    if not isinstance(candidate, list) or len(candidate) != 3:
+        candidate = asset_size.get("legacy_bbox_stage_units")
+    if not isinstance(candidate, list) or len(candidate) != 3:
+        return None
+    if any(_safe_float(item) in (None, 0.0) for item in candidate):
+        return None
+
+    values = [float(candidate[0]), float(candidate[1]), float(candidate[2])]
+    max_dimension = max(abs(item) for item in values)
+    units = (bbox.get("units") if isinstance(bbox, dict) else "") or asset_size.get("units")
+    if units == OUTPUT_SIZE_UNITS:
+        return values
+    if max_dimension <= 10.0:
+        return [round(item * 100.0, 6) for item in values]
+    return values
+
+
 def build_size_recommendation(
     reference_library: Dict[str, Any],
     query: Dict[str, Any],
     best_group: Dict[str, Any],
 ) -> Dict[str, Any]:
     query_size = (query.get("size", {}) or {})
-    query_bbox = query_size.get("bbox")
+    query_bbox = _bbox_candidate_as_cm(query_size)
     if not isinstance(query_bbox, list) or len(query_bbox) != 3:
         return {
             "status": "unavailable",
             "basis": ["query asset bbox missing"],
+        }
+
+    query_name = _normalize_text(" ".join(str(query.get(key) or "") for key in ("asset_id", "file")))
+    if any(token in query_name for token in ("coffee_cup", "teacup", "cup", "mug")):
+        median_bbox = [8.0, 8.0, 10.0]
+        axis_scale = []
+        for index in range(3):
+            query_value = _safe_float(query_bbox[index])
+            target_value = _safe_float(median_bbox[index])
+            axis_scale.append(None if query_value in (None, 0.0) or target_value is None else target_value / query_value)
+        valid_scales = [value for value in axis_scale if value is not None]
+        suggested_uniform_scale = min(valid_scales) if valid_scales else None
+        return {
+            "status": "scale" if suggested_uniform_scale is not None else "unavailable",
+            "reference_target_bbox": median_bbox,
+            "axis_scale_to_target_bbox": axis_scale,
+            "suggested_uniform_scale": suggested_uniform_scale,
+            "size_warning": "cup_container_default_scale",
+            "basis": [
+                "asset name matched cup/mug decor container",
+                "target bbox derived from built-in cup container default",
+                f"bbox units={OUTPUT_SIZE_UNITS}",
+                "warning=cup_container_default_scale",
+            ],
         }
 
     group_key = best_group.get("group_key", "")
@@ -507,9 +656,10 @@ def build_size_recommendation(
 
     ref_bboxes = []
     for asset in reference_assets:
-        bbox = ((asset.get("size", {}) or {}).get("bbox"))
-        if isinstance(bbox, list) and len(bbox) == 3 and all(_safe_float(item) not in (None, 0.0) for item in bbox):
-            ref_bboxes.append([float(bbox[0]), float(bbox[1]), float(bbox[2])])
+        asset_size = asset.get("size", {}) or {}
+        candidate = _bbox_candidate_as_cm(asset_size)
+        if isinstance(candidate, list) and len(candidate) == 3 and all(_safe_float(item) not in (None, 0.0) for item in candidate):
+            ref_bboxes.append([float(candidate[0]), float(candidate[1]), float(candidate[2])])
 
     if not ref_bboxes:
         return {
@@ -536,30 +686,187 @@ def build_size_recommendation(
     if valid_scales:
         max_axis_ratio = max(valid_scales) / min(valid_scales) if min(valid_scales) > 0 else None
 
-    size_warning = ""
+    size_warnings = []
     status = "ok"
+    if max_axis_ratio is not None and max_axis_ratio > 1.5:
+        size_warnings.append("axis_ratio_mismatch_vs_reference")
     if suggested_uniform_scale is not None and (suggested_uniform_scale < 0.1 or suggested_uniform_scale > 10.0):
-        size_warning = "bbox_outlier_vs_reference"
-        status = "review"
-    elif max_axis_ratio is not None and max_axis_ratio > 1.5:
-        size_warning = "axis_ratio_mismatch_vs_reference"
+        size_warnings.append("uniform_scale_outlier_vs_reference")
+        status = "scale"
+    elif suggested_uniform_scale is not None and abs(suggested_uniform_scale - 1.0) > 0.05:
+        size_warnings.append("uniform_scale_recommended")
+        status = "scale"
+    elif size_warnings:
         status = "review"
 
     basis = [
         f'matched reference group "{group_key}"',
         f"reference sample_count={len(ref_bboxes)}",
         "target bbox derived from median bbox of matched reference assets",
+        f"bbox units={OUTPUT_SIZE_UNITS}",
     ]
-    if size_warning:
-        basis.append(f"warning={size_warning}")
+    for warning in size_warnings:
+        basis.append(f"warning={warning}")
 
     return {
         "status": status,
         "reference_target_bbox": median_bbox,
         "axis_scale_to_target_bbox": axis_scale,
         "suggested_uniform_scale": suggested_uniform_scale,
-        "size_warning": size_warning,
+        "size_warning": ",".join(size_warnings),
         "basis": basis,
+    }
+
+
+def build_orientation_recommendation(query: Dict[str, Any], size_recommendation: Dict[str, Any]) -> Dict[str, Any]:
+    size = query.get("size", {}) or {}
+    bbox = size.get("bbox_size")
+    target_bbox = size_recommendation.get("reference_target_bbox")
+    stage_up_axis = ((size.get("bbox", {}) or {}).get("stage_up_axis") or "Z").upper()
+    if not isinstance(bbox, list) or len(bbox) != 3 or not isinstance(target_bbox, list) or len(target_bbox) != 3:
+        return {"apply": False, "basis": ["bbox or reference target bbox missing"]}
+
+    current = [_safe_float(item) for item in bbox]
+    target = [_safe_float(item) for item in target_bbox]
+    if any(item in (None, 0.0) for item in current) or any(item in (None, 0.0) for item in target):
+        return {"apply": False, "basis": ["bbox contains invalid values"]}
+
+    current_z = float(current[2])
+    current_y = float(current[1])
+    target_z = float(target[2])
+    scale = _safe_float(size_recommendation.get("suggested_uniform_scale")) or 1.0
+    scaled_z = current_z * scale
+    scaled_y = current_y * scale
+    current_z_error = abs(scaled_z - target_z) / target_z
+    y_as_z_error = abs(scaled_y - target_z) / target_z
+    if stage_up_axis == "Y":
+        return {
+            "apply": True,
+            "axis": "X",
+            "degrees": 90.0,
+            "from_axis": "Y",
+            "to_axis": "Z",
+            "set_stage_up_axis": "Z",
+            "basis": [
+                "source stage is Y-up; output pipeline normalizes to Z-up",
+                f"orientation check scale={round(scale, 6)}",
+                f"current_z_error={round(current_z_error, 6)}",
+                f"y_as_z_error={round(y_as_z_error, 6)}",
+            ],
+        }
+    if stage_up_axis != "Z":
+        return {"apply": False, "basis": [f"stage up axis is {stage_up_axis}"]}
+    if current_y > current_z * 1.35 and y_as_z_error < current_z_error:
+        return {
+            "apply": True,
+            "axis": "X",
+            "degrees": 90.0,
+            "from_axis": "Y",
+            "to_axis": "Z",
+            "basis": [
+                "stage is Z-up but geometry height appears aligned to Y",
+                f"orientation check scale={round(scale, 6)}",
+                f"current_z_error={round(current_z_error, 6)}",
+                f"y_as_z_error={round(y_as_z_error, 6)}",
+            ],
+        }
+    return {
+        "apply": False,
+        "basis": [
+            "geometry height axis already compatible with reference target",
+            f"orientation check scale={round(scale, 6)}",
+            f"current_z_error={round(current_z_error, 6)}",
+            f"y_as_z_error={round(y_as_z_error, 6)}",
+        ],
+    }
+
+
+def _stage1_is_furniture(furniture_class: str, classified_as_furniture: bool) -> bool:
+    return bool(classified_as_furniture and furniture_class != "decor")
+
+
+def _public_collider_type(approximation: str, scope: str, query: Dict[str, Any]) -> str:
+    normalized = str(approximation or "none")
+    if normalized == "none":
+        return "none"
+    shape_hints = (
+        ((query.get("geometry_features", {}) or {}).get("shape_hints", {}) or {})
+        if "geometry_features" in query
+        else {}
+    )
+    if not shape_hints:
+        shape_hints = ((query.get("geometry", {}) or {}).get("shape_hints", {}) or {})
+    if normalized == "convexHull" and scope == "whole_asset" and shape_hints.get("is_box_like"):
+        return "box"
+    if normalized == "convexHull":
+        return "convex_hull"
+    if normalized == "convexDecomposition":
+        return "convex_decomposition"
+    if normalized == "meshSimplified":
+        return "mesh_simplified"
+    return normalized
+
+
+def _review_required(
+    query: Dict[str, Any],
+    size_recommendation: Dict[str, Any],
+    target_mesh_paths: List[str],
+    recommended_approximation: str,
+) -> Tuple[bool, List[str]]:
+    reasons: List[str] = []
+    furniture_class = str(query.get("furniture_class") or "")
+    is_decor = furniture_class == "decor"
+    is_furniture = _stage1_is_furniture(furniture_class, bool(query.get("is_furniture")))
+    size = query.get("size", {}) or {}
+    geometry = query.get("geometry", {}) or {}
+
+    if not (is_furniture or is_decor):
+        reasons.append("not_stage1_furniture_or_decor")
+    if not size.get("bbox"):
+        reasons.append("bbox_missing")
+    if not size.get("footprint"):
+        reasons.append("footprint_missing")
+    if size_recommendation.get("status") in {"review", "unavailable"}:
+        reasons.append(f"size_recommendation_{size_recommendation.get('status')}")
+    for flag in query.get("review_flags", []) or []:
+        if flag in {
+            "bbox_missing",
+            "bbox_may_include_auxiliary_mesh",
+            "multi_mesh_shared_rigidbody_review_needed",
+            "base_variant_no_mesh_expected",
+        }:
+            reasons.append(flag)
+    if not target_mesh_paths:
+        reasons.append("target_mesh_paths_missing")
+    if recommended_approximation == "none":
+        reasons.append("collider_recommendation_none")
+    if int(geometry.get("primary_mesh_count") or 0) == 0:
+        reasons.append("primary_mesh_missing")
+
+    return bool(reasons), sorted(set(reasons))
+
+
+def build_collision_plan(
+    query: Dict[str, Any],
+    recommended_approximation: str,
+    recommended_scope: str,
+    target_mesh_paths: List[str],
+    review_required: bool,
+) -> Dict[str, Any]:
+    recommended_collider = _public_collider_type(recommended_approximation, recommended_scope, query)
+    auto_apply_safe = bool(
+        not review_required
+        and target_mesh_paths
+        and recommended_approximation
+        and recommended_approximation != "none"
+        and (query.get("is_furniture") or query.get("furniture_class") == "decor")
+    )
+    return {
+        "recommended_collider": recommended_collider,
+        "usd_approximation": recommended_approximation,
+        "scope": recommended_scope,
+        "target_mesh_paths": target_mesh_paths,
+        "auto_apply_safe": auto_apply_safe,
     }
 
 
@@ -593,6 +900,7 @@ def recommend_from_reference(
     if not recommended_scope:
         recommended_scope = query.get("static_collider", {}).get("scope", "whole_asset")
     size_recommendation = build_size_recommendation(reference_library, query, best_group)
+    orientation_recommendation = build_orientation_recommendation(query, size_recommendation)
 
     similar_assets = []
     target_group_key = best_group.get("group_key")
@@ -615,9 +923,34 @@ def recommend_from_reference(
     else:
         basis.append("no matching reference group found; using local heuristic")
 
+    review_required, review_reasons = _review_required(
+        query,
+        size_recommendation,
+        authoring_mesh_paths,
+        recommended_approximation,
+    )
+    collision_plan = build_collision_plan(
+        query,
+        recommended_approximation,
+        recommended_scope,
+        authoring_mesh_paths,
+        review_required,
+    )
+    furniture_class = str(query.get("furniture_class") or "")
+    is_decor = furniture_class == "decor"
+
     recommendation = {
         "asset": query,
         "recommendation": {
+            "is_furniture": _stage1_is_furniture(furniture_class, bool(query.get("is_furniture"))),
+            "furniture_class": furniture_class,
+            "is_decor": is_decor,
+            "stage1_supported": bool(_stage1_is_furniture(furniture_class, bool(query.get("is_furniture"))) or is_decor),
+            "review_required": review_required,
+            "review_reasons": review_reasons,
+            "size": query.get("size", {}) or {},
+            "support_structure": query.get("support_structure", {}) or {},
+            "collision_plan": collision_plan,
             "recommended_collider": {
                 "approximation": recommended_approximation,
                 "scope": recommended_scope,
@@ -625,6 +958,7 @@ def recommend_from_reference(
                 "basis": basis + (query.get("static_collider", {}).get("basis") or []),
             },
             "size_recommendation": size_recommendation,
+            "orientation_recommendation": orientation_recommendation,
             "reference_group_key": best_group.get("group_key", ""),
             "reference_group_asset_count": best_group.get("asset_count", 0),
             "authoring": {
@@ -633,6 +967,12 @@ def recommend_from_reference(
                 "collider_scope": recommended_scope,
                 "source_usd_for_authoring": authoring_source_file,
                 "target_mesh_paths": authoring_mesh_paths,
+                "auto_apply_safe": collision_plan["auto_apply_safe"],
+                "apply_reference_scale": size_recommendation.get("status") == "scale",
+                "suggested_uniform_scale": size_recommendation.get("suggested_uniform_scale"),
+                "reference_target_bbox": size_recommendation.get("reference_target_bbox"),
+                "apply_orientation_correction": bool(orientation_recommendation.get("apply")),
+                "orientation_correction": orientation_recommendation if orientation_recommendation.get("apply") else {},
                 "author_rigid_body": False,
                 "kinematic_mode": "static",
             },

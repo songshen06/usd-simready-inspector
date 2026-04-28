@@ -1,0 +1,39 @@
+// Fallback glTF PBR MDL module for self-contained USD exports.
+//
+// This file is included so USD assets that reference @gltf/pbr.mdl@ have a
+// resolvable local MDL asset when the upstream exporter omitted the file.
+// Omniverse's built-in glTF material implementation should be preferred when
+// available; this fallback keeps relative dependency validation from failing.
+
+mdl 1.4;
+
+import ::df::*;
+
+export material gltf_material(
+    color base_color_factor = color(1.0, 1.0, 1.0),
+    float base_alpha = 1.0,
+    float metallic_factor = 0.0,
+    float roughness_factor = 1.0,
+    int alpha_mode = 0,
+    float alpha_cutoff = 0.5,
+    float emissive_strength = 1.0
+) = material(
+    surface: material_surface(
+        scattering: df::diffuse_reflection_bsdf(
+            tint: base_color_factor
+        )
+    ),
+    geometry: material_geometry(
+        cutout_opacity: base_alpha
+    )
+);
+
+export color gltf_texture_lookup(
+    uniform texture_2d texture = texture_2d(),
+    uniform int tex_coord_index = 0,
+    uniform int wrap_s = 10497,
+    uniform int wrap_t = 10497,
+    float2 offset = float2(0.0, 0.0),
+    float rotation = 0.0,
+    float2 scale = float2(1.0, 1.0)
+) = color(1.0, 1.0, 1.0);

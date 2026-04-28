@@ -12,6 +12,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -169,6 +170,40 @@ def _get_attr_value(attr: Any) -> Any:
     except Exception:
         return None
     return None
+
+
+def _asset_path_value_to_string(value: Any) -> Optional[str]:
+    if isinstance(value, Sdf.AssetPath):
+        return value.path or value.resolvedPath or None
+    if isinstance(value, str):
+        return value or None
+    return None
+
+
+def _collect_asset_path_strings(value: Any) -> List[str]:
+    path = _asset_path_value_to_string(value)
+    if path:
+        return [path]
+    if isinstance(value, (list, tuple)):
+        paths: List[str] = []
+        for item in value:
+            item_path = _asset_path_value_to_string(item)
+            if item_path:
+                paths.append(item_path)
+        return paths
+    return []
+
+
+def _is_external_or_absolute_asset_path(path: str) -> bool:
+    if "://" in path:
+        return True
+    if os.path.isabs(path):
+        return True
+    return bool(re.match(r"^[A-Za-z]:[\\/]", path))
+
+
+def _resolve_relative_asset_path(asset_path: str, anchor_dir: str) -> str:
+    return os.path.abspath(os.path.normpath(os.path.join(anchor_dir, asset_path)))
 
 
 def _get_kind(prim: Usd.Prim) -> Optional[str]:
@@ -680,6 +715,58 @@ def inspect_materials(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
     }
 
 
+def inspect_asset_dependencies(stage: Usd.Stage, input_path: str, max_prims: int = 0) -> Dict[str, Any]:
+    """Collect authored asset-path dependencies and flag missing relative files."""
+    anchor_dir = os.path.dirname(os.path.abspath(input_path))
+    dependencies: List[Dict[str, Any]] = []
+    relative_dependencies: List[Dict[str, Any]] = []
+    missing_relative_dependencies: List[Dict[str, Any]] = []
+    seen = set()
+
+    for prim in _iter_prims(stage, max_prims=max_prims):
+        for attr in prim.GetAttributes():
+            try:
+                type_name = attr.GetTypeName()
+                value = attr.Get()
+            except Exception:
+                continue
+            is_asset_typed = type_name in {Sdf.ValueTypeNames.Asset, Sdf.ValueTypeNames.AssetArray}
+            if not is_asset_typed and not isinstance(value, Sdf.AssetPath):
+                continue
+            asset_paths = _collect_asset_path_strings(value)
+            if not asset_paths:
+                continue
+            for asset_path in asset_paths:
+                is_relative = not _is_external_or_absolute_asset_path(asset_path)
+                resolved_path = _resolve_relative_asset_path(asset_path, anchor_dir) if is_relative else None
+                exists = bool(resolved_path and os.path.exists(resolved_path)) if is_relative else None
+                record = {
+                    "prim": prim.GetPath().pathString,
+                    "attribute": attr.GetName(),
+                    "asset_path": asset_path,
+                    "is_relative": is_relative,
+                    "resolved_path": resolved_path,
+                    "exists": exists,
+                }
+                key = (record["prim"], record["attribute"], record["asset_path"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                dependencies.append(record)
+                if is_relative:
+                    relative_dependencies.append(record)
+                    if not exists:
+                        missing_relative_dependencies.append(record)
+
+    return {
+        "all": dependencies,
+        "relative": relative_dependencies,
+        "missing_relative": missing_relative_dependencies,
+        "relative_count": len(relative_dependencies),
+        "missing_relative_count": len(missing_relative_dependencies),
+    }
+
+
 def _schema_applied(prim: Usd.Prim, schema_cls: Any) -> bool:
     try:
         api = schema_cls(prim)
@@ -1004,6 +1091,7 @@ def build_issues(report: Dict[str, Any]) -> Tuple[List[str], List[str]]:
     geometry = report.get("geometry", {})
     materials = report.get("materials", {})
     physics = report.get("physics", {})
+    asset_dependencies = report.get("asset_dependencies", {})
 
     if not stage_info.get("default_prim"):
         issues.append("Stage has no defaultPrim.")
@@ -1019,6 +1107,8 @@ def build_issues(report: Dict[str, Any]) -> Tuple[List[str], List[str]]:
         issues.append("Multiple materials found but no GeomSubset-based assignments were detected.")
     if geometry.get("bbox_failures"):
         issues.append("One or more bbox computations failed; inspect geometry.bbox_failures.")
+    if asset_dependencies.get("missing_relative"):
+        issues.append("One or more relative asset dependencies are missing; inspect asset_dependencies.missing_relative.")
 
     if geometry.get("shape_hints"):
         notes.append("shape_hints are heuristic only and should be validated in downstream pipeline logic.")
@@ -1039,6 +1129,7 @@ def build_detailed_report(stage: Usd.Stage, input_path: str, max_prims: int = 0)
     report["materials"] = inspect_materials(stage, max_prims=max_prims)
     report["physics"] = inspect_physics(stage, max_prims=max_prims)
     report["metadata"] = inspect_metadata(stage, max_prims=max_prims)
+    report["asset_dependencies"] = inspect_asset_dependencies(stage, input_path, max_prims=max_prims)
     report["semantic_candidates"] = []
     report["physics_profile_candidates"] = report["physics"].get("physics_profile_candidates", [])
     report["collider_recommendation"] = report["geometry"].get("collider_recommendation", {})
