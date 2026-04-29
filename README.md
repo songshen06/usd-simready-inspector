@@ -88,6 +88,7 @@ python3 -c "from pxr import Usd; print('USD OK')"
 
 ### Static Furniture Pipeline
 
+- `usd_simready_cli.py`
 - `static_furniture.py`
 - `extract_static_furniture_reference.py`
 - `recommend_static_furniture_simready.py`
@@ -96,6 +97,24 @@ python3 -c "from pxr import Usd; print('USD OK')"
 - `compare_reference_recommendations.py`
 
 ## Quick Start
+
+### 0. Unified one-step processing
+
+For most assets, use the unified CLI. It generates the recommendation, applies
+scale/orientation/collider/resource fixes, and can emit a final inspection
+report:
+
+```bash
+python3 usd_simready_cli.py process \
+  simready_furniture_reference_with_wikidata.json \
+  /path/to/new_asset.usd \
+  --output /path/to/new_asset.simready_static.usda \
+  --emit-report
+```
+
+The `process` command writes a self-contained USD package: relative texture and
+MDL references, copied dependencies, optional reference scale, optional
+orientation correction, and static collision authoring.
 
 ### 1. Inspect a USD asset
 
