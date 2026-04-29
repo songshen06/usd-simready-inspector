@@ -116,6 +116,36 @@ The `process` command writes a self-contained USD package: relative texture and
 MDL references, copied dependencies, optional reference scale, optional
 orientation correction, and static collision authoring.
 
+### 0.1. Optional Codex Agent Skill
+
+This repository includes a Codex skill for agents that should use the unified
+CLI consistently:
+
+```text
+codex-skills/usd-simready-cli
+```
+
+To install it into a local Codex environment, copy the skill directory into the
+Codex skills folder:
+
+```bash
+mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
+cp -R codex-skills/usd-simready-cli "${CODEX_HOME:-$HOME/.codex}/skills/"
+```
+
+After installation, requests such as “process this USD for SimReady validation”
+or “fix missing MDL/texture dependencies and validate this USD” should trigger
+the skill. The skill expects:
+
+- this repository checkout with `usd_simready_cli.py`
+- Python 3 with USD `pxr` bindings available
+- `simready_furniture_reference_with_wikidata.json` or another reference JSON
+- read access to input USD assets and write access to the output directory
+
+The skill tells agents to run `usd_simready_cli.py process`, then verify the
+emitted report for `issues`, missing relative dependencies, orientation, scale,
+and collision authoring.
+
 ### 1. Inspect a USD asset
 
 ```bash

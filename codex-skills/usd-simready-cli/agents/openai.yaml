@@ -1,0 +1,4 @@
+interface:
+  display_name: "USD SimReady CLI"
+  short_description: "Process USD assets for SimReady validation."
+  default_prompt: "Process this USD with the unified SimReady CLI, then verify dependencies, orientation, scale, collision, and output report."
