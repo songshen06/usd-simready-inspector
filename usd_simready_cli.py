@@ -21,11 +21,12 @@ def _replace_usd_suffix(path: str, suffix: str) -> str:
     return path + suffix
 
 
-def _default_process_output(input_usd: str, output_dir: Optional[str]) -> str:
+def _default_process_output(input_usd: str, output_dir: Optional[str], output_format: str = "auto") -> str:
     base = os.path.basename(input_usd)
     stem, _ = os.path.splitext(base)
     directory = output_dir or os.getcwd()
-    return os.path.join(directory, f"{stem}.simready_static.usda")
+    suffix = ".usdc" if output_format == "usdc" else ".usda"
+    return os.path.join(directory, f"{stem}.simready_static{suffix}")
 
 
 def _default_recommendation_output(input_usd: str, output_path: Optional[str] = None) -> str:
@@ -75,6 +76,8 @@ def _cmd_recommend(args: argparse.Namespace) -> int:
 
 def _apply_args(args: argparse.Namespace, input_usd: str, recommendation_json: str, output_usd: str) -> List[str]:
     apply_args = [input_usd, recommendation_json, "--output", output_usd]
+    if getattr(args, "output_format", "auto"):
+        apply_args.extend(["--output-format", args.output_format])
     if getattr(args, "allow_missing_assets", False):
         apply_args.append("--allow-missing-assets")
     if getattr(args, "no_copy_relative_assets", False):
@@ -89,7 +92,7 @@ def _cmd_apply(args: argparse.Namespace) -> int:
 
 
 def _cmd_process(args: argparse.Namespace) -> int:
-    output_usd = args.output or _default_process_output(args.input_usd, args.output_dir)
+    output_usd = args.output or _default_process_output(args.input_usd, args.output_dir, args.output_format)
     os.makedirs(os.path.dirname(os.path.abspath(output_usd)), exist_ok=True)
 
     recommendation_output = args.recommendation_output or _default_recommendation_output(args.input_usd, output_usd)
@@ -110,6 +113,12 @@ def _cmd_process(args: argparse.Namespace) -> int:
 
 
 def _add_apply_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--output-format",
+        choices=["auto", "usda", "usdc"],
+        default="auto",
+        help="USD export format. auto follows the output extension; usdc writes compact binary USD.",
+    )
     parser.add_argument(
         "--allow-missing-assets",
         action="store_true",

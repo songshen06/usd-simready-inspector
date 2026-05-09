@@ -116,6 +116,18 @@ The `process` command writes a self-contained USD package: relative texture and
 MDL references, copied dependencies, optional reference scale, optional
 orientation correction, and static collision authoring.
 
+For large mesh-heavy assets, prefer binary USD crate output to avoid very large
+ASCII USDA files:
+
+```bash
+python3 usd_simready_cli.py process \
+  simready_furniture_reference_with_wikidata.json \
+  /path/to/new_asset.usd \
+  --output /path/to/new_asset.simready_static.usdc \
+  --output-format usdc \
+  --emit-report
+```
+
 ### 0.1. Optional Codex Agent Skill
 
 This repository includes a Codex skill for agents that should use the unified
@@ -193,9 +205,12 @@ are copied next to the output USD with the same relative layout. If an upstream
 asset references `gltf/pbr.mdl` but omitted the file, the bundled fallback MDL
 is written to `gltf/pbr.mdl` in the output directory so downstream validators
 can resolve the shader source asset. Other missing relative dependencies still
-fail the command unless `--allow-missing-assets` is used. Exported USDA files
-are normalized so copied assets, including textures, are authored as relative
-paths such as `textures/name.png` instead of machine-local absolute paths.
+fail the command unless `--allow-missing-assets` is used. Exported USD files
+are normalized so copied assets, including textures and MDL shader sources, are
+authored as explicit relative paths such as `./textures/name.png` or
+`./gltf/pbr.mdl` instead of machine-local absolute paths. Use
+`--output-format usdc` or a `.usdc` output path for compact binary USD crate
+output; keep `.usda` when a human-readable text layer is required for review.
 When the recommendation includes `authoring.apply_reference_scale=true`, the
 authoring step also applies `authoring.suggested_uniform_scale` to the default
 prim so assets with incorrect source scale are normalized against the trusted

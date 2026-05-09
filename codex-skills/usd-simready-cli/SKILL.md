@@ -9,7 +9,7 @@ Use the repository's unified CLI first:
 
 ```bash
 python3 usd_simready_cli.py process REF_JSON INPUT_USD \
-  --output OUTPUT_USDA \
+  --output OUTPUT_USD \
   --emit-report
 ```
 
@@ -34,8 +34,8 @@ If `pxr` is missing, stop and tell the user the USD Python bindings are required
 
 ## Main Workflow
 
-1. Confirm the input path exists and identify an output path. Prefer a `.simready_static.usda` output under the user's requested output directory.
-2. Run `usd_simready_cli.py process` with the reference JSON, input USD, output USDA, and `--emit-report`.
+1. Confirm the input path exists and identify an output path. Prefer `.simready_static.usdc` for large assets and `.simready_static.usda` when the user needs a human-readable text layer.
+2. Run `usd_simready_cli.py process` with the reference JSON, input USD, output USD, and `--emit-report`. Add `--output-format usdc` when writing a compact binary `.usdc`.
 3. Read the emitted report and verify:
    - `issues` is empty or explain remaining issues.
    - `asset_dependencies.missing_relative_count == 0`.
@@ -62,14 +62,22 @@ python3 usd_simready_cli.py recommend REF_JSON INPUT_USD --output RECOMMENDATION
 Apply an existing recommendation:
 
 ```bash
-python3 usd_simready_cli.py apply INPUT_USD RECOMMENDATION_JSON --output OUTPUT_USDA
+python3 usd_simready_cli.py apply INPUT_USD RECOMMENDATION_JSON --output OUTPUT_USD
+```
+
+Apply an existing recommendation with compact binary output:
+
+```bash
+python3 usd_simready_cli.py apply INPUT_USD RECOMMENDATION_JSON \
+  --output OUTPUT_USDC \
+  --output-format usdc
 ```
 
 One-step process:
 
 ```bash
 python3 usd_simready_cli.py process REF_JSON INPUT_USD \
-  --output OUTPUT_USDA \
+  --output OUTPUT_USD \
   --recommendation-output RECOMMENDATION_JSON \
   --report-output REPORT_JSON \
   --emit-report
@@ -82,7 +90,7 @@ The `process` command can:
 - Generate a recommendation from the trusted reference library.
 - Copy resolvable texture and asset dependencies next to the output.
 - Bundle fallback `gltf/pbr.mdl` when source assets reference it but omit it.
-- Rewrite exported USDA asset paths to relative paths such as `textures/name.png`.
+- Rewrite exported USD asset paths to explicit relative paths such as `./textures/name.png` and `./gltf/pbr.mdl`.
 - Apply `authoring.suggested_uniform_scale` when `apply_reference_scale=true`.
 - Apply orientation correction when `apply_orientation_correction=true`, including Y-up to Z-up conversion and lying-down geometry fixes.
 - Author static collision using the recommended USD approximation.

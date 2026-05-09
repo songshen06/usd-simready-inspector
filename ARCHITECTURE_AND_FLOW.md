@@ -255,6 +255,12 @@ python3 recommend_static_furniture_simready.py furniture_reference.json /path/to
 python3 apply_static_furniture_simready.py /path/to/new_asset.usd new_asset.recommendation.json --output new_asset.simready_static.usda
 ```
 
+For compact binary output, use:
+
+```bash
+python3 apply_static_furniture_simready.py /path/to/new_asset.usd new_asset.recommendation.json --output new_asset.simready_static.usdc --output-format usdc
+```
+
 适合：
 
 - 家具静态 collider 推荐

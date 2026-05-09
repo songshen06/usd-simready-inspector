@@ -19,12 +19,14 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BUNDLED_RELATIVE_ASSETS = {
     "gltf/pbr.mdl": os.path.join(SCRIPT_DIR, "gltf", "pbr.mdl"),
 }
+EXPORT_FORMATS = {"auto", "usda", "usdc"}
 
 
-def _default_output_path(input_usd: str) -> str:
+def _default_output_path(input_usd: str, output_format: str = "auto") -> str:
     basename = os.path.basename(input_usd)
     stem, _ = os.path.splitext(basename)
-    return os.path.join(os.getcwd(), f"{stem}.simready_static.usda")
+    suffix = ".usdc" if output_format == "usdc" else ".usda"
+    return os.path.join(os.getcwd(), f"{stem}.simready_static{suffix}")
 
 
 def _apply_collision_to_prim(prim, approximation: str) -> None:
@@ -106,14 +108,32 @@ def _apply_orientation_correction(stage, correction: dict) -> bool:
     return True
 
 
+def _normalize_asset_key(asset_path: str) -> str:
+    normalized = asset_path.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _validator_relative_asset_path(asset_path: str) -> str:
+    normalized = asset_path.replace("\\", "/")
+    if (
+        not normalized
+        or normalized.startswith(("./", "../", "/"))
+        or "://" in normalized
+    ):
+        return normalized
+    return f"./{normalized}"
+
+
 def _asset_target_relative_path(asset_path: str, source_path: str) -> str:
     if not os.path.isabs(asset_path):
-        return _normalize_asset_key(asset_path)
+        return _validator_relative_asset_path(_normalize_asset_key(asset_path))
     parent_name = os.path.basename(os.path.dirname(source_path))
     basename = os.path.basename(source_path)
     if parent_name:
-        return os.path.join(parent_name, basename).replace("\\", "/")
-    return basename
+        return _validator_relative_asset_path(os.path.join(parent_name, basename))
+    return _validator_relative_asset_path(basename)
 
 
 def _copy_asset_dependencies(asset_dependencies: dict, output_path: str) -> List[str]:
@@ -146,10 +166,6 @@ def _copy_asset_dependencies(asset_dependencies: dict, output_path: str) -> List
         shutil.copy2(source_path, target_path)
         copied_paths.append(target_path)
     return copied_paths
-
-
-def _normalize_asset_key(asset_path: str) -> str:
-    return asset_path.replace("\\", "/").lstrip("./")
 
 
 def _copy_bundled_asset_dependencies(asset_dependencies: dict, output_path: str) -> List[str]:
@@ -190,12 +206,18 @@ def _rewrite_asset_paths_to_relative(stage, asset_dependencies: dict) -> int:
         prim_path = item.get("prim")
         attr_name = item.get("attribute")
         asset_path = item.get("asset_path")
+        asset_key = _normalize_asset_key(asset_path)
         source_path = item.get("resolved_path") if item.get("is_relative") else asset_path
         if not prim_path or not attr_name or not asset_path or not source_path:
             continue
-        if "://" in asset_path or not os.path.exists(source_path):
+        if "://" in asset_path:
             continue
-        relative_path = _asset_target_relative_path(asset_path, source_path)
+        if os.path.exists(source_path):
+            relative_path = _asset_target_relative_path(asset_path, source_path)
+        elif item.get("is_relative") and asset_key in BUNDLED_RELATIVE_ASSETS:
+            relative_path = _validator_relative_asset_path(asset_key)
+        else:
+            continue
         if asset_path == relative_path:
             continue
         prim = stage.GetPrimAtPath(prim_path)
@@ -213,13 +235,56 @@ def _asset_path_rewrite_map(asset_dependencies: dict) -> dict:
     replacements = {}
     for item in asset_dependencies.get("all", []) or []:
         asset_path = item.get("asset_path")
+        asset_key = _normalize_asset_key(asset_path or "")
         source_path = item.get("resolved_path") if item.get("is_relative") else asset_path
-        if not asset_path or not source_path or "://" in asset_path or not os.path.exists(source_path):
+        if not asset_path or not source_path or "://" in asset_path:
             continue
-        relative_path = _asset_target_relative_path(asset_path, source_path)
+        if os.path.exists(source_path):
+            relative_path = _asset_target_relative_path(asset_path, source_path)
+        elif item.get("is_relative") and asset_key in BUNDLED_RELATIVE_ASSETS:
+            relative_path = _validator_relative_asset_path(asset_key)
+        else:
+            continue
         replacements[asset_path] = relative_path
+        replacements[asset_key] = relative_path
         replacements[os.path.abspath(source_path)] = relative_path
     return replacements
+
+
+def _export_format_for_output(output_path: str, requested_format: str) -> str | None:
+    if requested_format not in EXPORT_FORMATS:
+        raise ValueError(f"Unsupported output format: {requested_format}")
+    lower_path = output_path.lower()
+    extension_format = None
+    if lower_path.endswith(".usda"):
+        extension_format = "usda"
+    elif lower_path.endswith(".usdc"):
+        extension_format = "usdc"
+
+    if requested_format == "auto":
+        return extension_format
+    if extension_format and extension_format != requested_format:
+        raise ValueError(
+            f"--output-format {requested_format} conflicts with output extension {os.path.splitext(output_path)[1]}"
+        )
+    return requested_format
+
+
+def _export_stage(stage, output_path: str, output_format: str) -> str | None:
+    export_format = _export_format_for_output(output_path, output_format)
+    if export_format:
+        stage.Export(output_path, args={"format": export_format})
+        return export_format
+    stage.Export(output_path)
+    return None
+
+
+def _rewrite_exported_stage_asset_paths(output_path: str, asset_dependencies: dict) -> int:
+    stage = open_stage(output_path)
+    rewrite_count = _rewrite_asset_paths_to_relative(stage, asset_dependencies)
+    if rewrite_count:
+        stage.GetRootLayer().Save()
+    return rewrite_count
 
 
 def _rewrite_exported_usda_asset_paths(output_path: str, asset_dependencies: dict) -> int:
@@ -254,7 +319,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Apply static furniture SimReady settings from recommendation JSON.")
     parser.add_argument("input_usd", help="Path to source USD asset")
     parser.add_argument("recommendation_json", help="Path to recommendation JSON from recommend_static_furniture_simready.py")
-    parser.add_argument("--output", help="Path to write the authored USD; default is ./<name>.simready_static.usda")
+    parser.add_argument(
+        "--output",
+        help="Path to write the authored USD; default is ./<name>.simready_static.usda, or .usdc with --output-format usdc",
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=sorted(EXPORT_FORMATS),
+        default="auto",
+        help="USD export format. auto follows the output extension; usdc writes compact binary USD.",
+    )
     parser.add_argument(
         "--allow-missing-assets",
         action="store_true",
@@ -279,7 +353,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     target_mesh_paths = authoring.get("target_mesh_paths") or collision_plan.get("target_mesh_paths") or []
     approximation = authoring.get("approximation") or collision_plan.get("usd_approximation") or "convexHull"
     source_usd_for_authoring = authoring.get("source_usd_for_authoring") or args.input_usd
-    output_path = args.output or _default_output_path(os.path.abspath(source_usd_for_authoring))
+    output_path = args.output or _default_output_path(os.path.abspath(source_usd_for_authoring), args.output_format)
 
     stage = open_stage(source_usd_for_authoring)
     asset_dependencies = inspect_asset_dependencies(stage, source_usd_for_authoring)
@@ -322,10 +396,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     rewritten_count = 0
     if not args.no_copy_relative_assets:
         rewritten_count = _rewrite_asset_paths_to_relative(stage, asset_dependencies)
-    stage.Export(output_path)
+    try:
+        export_format = _export_stage(stage, output_path, args.output_format)
+    except ValueError as error:
+        print(f"error: {error}")
+        return 2
     file_rewritten_count = 0
     if not args.no_copy_relative_assets:
-        file_rewritten_count = _rewrite_exported_usda_asset_paths(output_path, asset_dependencies)
+        if export_format == "usdc":
+            file_rewritten_count = _rewrite_exported_stage_asset_paths(output_path, asset_dependencies)
+        else:
+            file_rewritten_count = _rewrite_exported_usda_asset_paths(output_path, asset_dependencies)
     copied_paths: List[str] = []
     if not args.no_copy_relative_assets:
         copied_paths = _copy_asset_dependencies(asset_dependencies, output_path)
