@@ -10,6 +10,8 @@ import sys
 from typing import List, Optional
 
 from apply_static_furniture_simready import main as apply_static_main
+from content_physics_agent import main as content_physics_main
+from content_physics_supplement import main as physics_supplement_main
 from static_furniture import inspect_asset, load_json, recommend_from_reference, save_json
 from usd_inspector import build_detailed_report, open_stage
 
@@ -112,6 +114,41 @@ def _cmd_process(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_physics_agent(args: argparse.Namespace) -> int:
+    agent_args = [args.input_usd]
+    agent_args.extend(["--output-dir", args.output_dir])
+    agent_args.extend(["--content-agents-root", args.content_agents_root])
+    agent_args.extend(["--physics-agent", args.physics_agent])
+    agent_args.extend(["--render-backend", args.render_backend])
+    agent_args.extend(["--collision-approx", args.collision_approx])
+    if args.vlm_backend:
+        agent_args.extend(["--vlm-backend", args.vlm_backend])
+    if args.vlm_model:
+        agent_args.extend(["--vlm-model", args.vlm_model])
+    if args.summary_json:
+        agent_args.extend(["--summary-json", args.summary_json])
+    if args.dry_run:
+        agent_args.append("--dry-run")
+    if args.clean:
+        agent_args.append("--clean")
+    if args.resume:
+        agent_args.append("--resume")
+    if args.skip:
+        agent_args.extend(["--skip", args.skip])
+    if args.only:
+        agent_args.extend(["--only", args.only])
+    return content_physics_main(agent_args)
+
+
+def _cmd_physics_supplement(args: argparse.Namespace) -> int:
+    supplement_args = [args.recommendation_json, "--physics-predictions", args.physics_predictions]
+    if args.source_usd:
+        supplement_args.extend(["--source-usd", args.source_usd])
+    if args.output:
+        supplement_args.extend(["--output", args.output])
+    return physics_supplement_main(supplement_args)
+
+
 def _add_apply_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--output-format",
@@ -172,6 +209,39 @@ def build_parser() -> argparse.ArgumentParser:
     process_parser.add_argument("--max-prims", type=int, default=0)
     _add_apply_flags(process_parser)
     process_parser.set_defaults(func=_cmd_process)
+
+    physics_agent_parser = subparsers.add_parser(
+        "physics-agent",
+        help="Run NVIDIA Content Agents Physics Agent against a USD asset",
+    )
+    physics_agent_parser.add_argument("input_usd")
+    physics_agent_parser.add_argument("--output-dir", default="out/content_physics")
+    physics_agent_parser.add_argument("--content-agents-root", default=os.path.expanduser("~/content-agents"))
+    physics_agent_parser.add_argument(
+        "--physics-agent",
+        default=os.path.expanduser("~/content-agents/.venv/bin/physics-agent"),
+    )
+    physics_agent_parser.add_argument("--render-backend", choices=["ovrtx", "remote", "warp"], default="remote")
+    physics_agent_parser.add_argument("--vlm-backend")
+    physics_agent_parser.add_argument("--vlm-model")
+    physics_agent_parser.add_argument("--collision-approx", default="convexHull")
+    physics_agent_parser.add_argument("--summary-json")
+    physics_agent_parser.add_argument("--dry-run", action="store_true")
+    physics_agent_parser.add_argument("--clean", action="store_true")
+    physics_agent_parser.add_argument("--resume", action="store_true")
+    physics_agent_parser.add_argument("--skip")
+    physics_agent_parser.add_argument("--only")
+    physics_agent_parser.set_defaults(func=_cmd_physics_agent)
+
+    supplement_parser = subparsers.add_parser(
+        "physics-supplement",
+        help="Append Content Agents Physics Agent predictions to a recommendation JSON",
+    )
+    supplement_parser.add_argument("recommendation_json")
+    supplement_parser.add_argument("--physics-predictions", required=True)
+    supplement_parser.add_argument("--source-usd")
+    supplement_parser.add_argument("--output")
+    supplement_parser.set_defaults(func=_cmd_physics_supplement)
 
     return parser
 

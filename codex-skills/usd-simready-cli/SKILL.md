@@ -44,6 +44,8 @@ If `pxr` is missing, stop and tell the user the USD Python bindings are required
    - `geometry.bbox.world.size` has plausible dimensions for the semantic class.
    - Physics collision was authored on intended mesh targets.
 4. Report the output USD, recommendation JSON, report JSON, and the key validation facts.
+5. If the user asks for NVIDIA Content Agents Physics Agent, run `usd_simready_cli.py physics-agent INPUT_USD --dry-run` first. Only run the full command when a VLM API key and render backend are configured.
+6. When Physics Agent predictions are available, merge them back into the rule-based recommendation with `usd_simready_cli.py physics-supplement`. Treat this as supplemental review evidence; do not claim it automatically overrides `recommendation.authoring`.
 
 ## Useful Commands
 
@@ -95,6 +97,30 @@ The `process` command can:
 - Apply orientation correction when `apply_orientation_correction=true`, including Y-up to Z-up conversion and lying-down geometry fixes.
 - Author static collision using the recommended USD approximation.
 
+The `physics-agent` command can:
+
+- Generate a per-asset NVIDIA Content Agents Physics Agent YAML config.
+- Invoke an external `physics-agent run CONFIG`.
+- Record expected outputs for predictions, HTML report, and physics-authored USD.
+
+The `physics-supplement` command can:
+
+- Read an existing rule-based recommendation JSON.
+- Read Content Agents `predictions.jsonl`.
+- Add rule-first constraints for class, target size, scale context, collider policy, and allowed mass range.
+- Add `supplements.content_agent_physics` with component material, density, mass, friction, restitution, confidence, and reasoning.
+- Add review flags for conflicts or outliers, while leaving static authoring values unchanged.
+- Treat mass as unaccepted evidence when `mass_assessment.status` is not `usable`; use `mass_for_authoring_kg`, not raw VLM mass, for any downstream authoring decision.
+
+Example:
+
+```bash
+python3 usd_simready_cli.py physics-supplement RECOMMENDATION_JSON \
+  --physics-predictions PREDICTIONS_JSONL \
+  --source-usd INPUT_USD \
+  --output RECOMMENDATION_WITH_PHYSICS_JSON
+```
+
 ## Interpreting Common Results
 
 - `missing_relative_count > 0`: output is not self-contained; inspect `asset_dependencies.missing_relative`.
@@ -102,6 +128,7 @@ The `process` command can:
 - `size_recommendation.status=scale`: source scale is corrected from the reference library.
 - `review_required=true`: do not claim the asset is automatically safe; explain `review_reasons`.
 - `auto_apply_safe=true`: the recommendation is suitable for automatic static authoring under current rules.
+- `supplements.content_agent_physics`: VLM-derived supplemental evidence from NVIDIA Content Agents; use it to review material, mass, and friction assumptions. If `mass_for_authoring_kg=null`, do not report the raw mass as the recommended mass.
 
 ## Validation Snippet
 

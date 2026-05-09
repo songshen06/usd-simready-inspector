@@ -229,8 +229,68 @@ python3 smoke_test_static_furniture_runtime.py \
 ```
 
 Use `--dry-run` to inspect the command without invoking `omni-asset-cli`.
-If your local CLI uses different argument names, provide `--command-template`;
-the template supports `{input}`, `{recommendation}`, and `{output}`.
+
+### 6. Optional NVIDIA Content Agents Physics Agent
+
+This repository can hand an authored USD to NVIDIA Content Agents Physics Agent
+when `~/content-agents` is installed. The bridge generates a per-asset
+Physics Agent YAML config, invokes `physics-agent run`, and records expected
+outputs:
+
+```bash
+python3 usd_simready_cli.py physics-agent path/to/asset.usdc \
+  --output-dir out/content_physics \
+  --content-agents-root ~/content-agents \
+  --physics-agent ~/content-agents/.venv/bin/physics-agent \
+  --render-backend remote \
+  --dry-run
+```
+
+Remove `--dry-run` only after a render backend and VLM key are configured. A
+full run produces:
+
+- `<working_dir>/predictions/predictions.jsonl`
+- `<working_dir>/predictions/report.html`
+- `<working_dir>/physics/<input-stem>_physics.usda`
+
+Physics Agent is VLM-based and requires a configured provider key such as
+`NVIDIA_API_KEY` or `OPENAI_API_KEY`. Local or service rendering also requires
+OVRTX/GPU support.
+
+Physics Agent output is intended as supplemental evidence for the rule-based
+furniture/decor recommendation, not as an automatic replacement. Merge the
+agent's component-level material and physics estimates into an existing
+recommendation with:
+
+```bash
+python3 usd_simready_cli.py physics-supplement \
+  path/to/asset.recommendation.json \
+  --physics-predictions out/content_physics/<session>/predictions.jsonl \
+  --source-usd path/to/asset.usd \
+  --output path/to/asset.recommendation.with_content_physics.json
+```
+
+The merged recommendation keeps the existing `recommendation.authoring` values
+unchanged and adds:
+
+```text
+supplements.content_agent_physics
+```
+
+The supplement is two-stage. First, the rule engine defines
+`rule_constraints`: furniture/decor class, target size, scale context, allowed
+mass range, and collider policy. Then VLM-derived evidence is evaluated inside
+those bounds. Use this section for review evidence such as inferred material,
+density, estimated mass, static/dynamic friction, restitution, and component
+reasoning. The merger may add review flags when the VLM-derived evidence
+conflicts with the rule-based furniture/decor assumption, for example an
+outlier mass for a decor asset.
+
+Mass from Physics Agent is treated carefully. If the rule-based recommendation
+already plans a source-scale correction, the agent's mass is recorded as
+`raw_estimated_mass_kg`, `mass_for_authoring_kg` is set to `null`, and the
+supplement receives `mass_assessment.status=invalid_unscaled_geometry`. Re-run
+or re-estimate mass after the final authored scale is established.
 
 ### 6. Build a reference with SimReady semantic metadata
 
