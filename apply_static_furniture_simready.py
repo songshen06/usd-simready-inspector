@@ -7,9 +7,9 @@ import argparse
 import os
 import re
 import shutil
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
-from pxr import Gf, Sdf, UsdGeom, UsdPhysics
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
 
 from static_furniture import load_json
 from usd_inspector import inspect_asset_dependencies, open_stage
@@ -106,6 +106,164 @@ def _apply_orientation_correction(stage, correction: dict) -> bool:
         return True
     orient_op.Set(correction_quat * current)
     return True
+
+
+def _stage_bbox_size_cm(stage) -> Optional[List[float]]:
+    default_prim = stage.GetDefaultPrim()
+    if not default_prim or not default_prim.IsValid():
+        return None
+    bbox_cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_], useExtentsHint=True)
+    bbox = bbox_cache.ComputeWorldBound(default_prim).ComputeAlignedRange()
+    if bbox.IsEmpty():
+        return None
+    meters_per_unit = UsdGeom.GetStageMetersPerUnit(stage)
+    scale_to_cm = float(meters_per_unit) * 100.0
+    return [float(value) * scale_to_cm for value in bbox.GetSize()]
+
+
+def _source_bbox_size_cm(recommendation: dict) -> Optional[List[float]]:
+    for container in (recommendation.get("asset", {}) or {}, recommendation.get("recommendation", {}) or {}):
+        size = container.get("size", {}) or {}
+        bbox_size = size.get("bbox_size")
+        if isinstance(bbox_size, list) and len(bbox_size) == 3:
+            values = [_safe_float(item) for item in bbox_size]
+            if all(value is not None for value in values):
+                return [float(value) for value in values]
+        bbox = size.get("bbox", {}) or {}
+        candidate = bbox.get("size") if isinstance(bbox, dict) else None
+        if isinstance(candidate, list) and len(candidate) == 3:
+            values = [_safe_float(item) for item in candidate]
+            if all(value is not None for value in values):
+                return [float(value) for value in values]
+    return None
+
+
+def _apply_expected_orientation(size_cm: Sequence[float], correction: dict) -> List[float]:
+    axis = str((correction or {}).get("axis") or "").upper()
+    degrees = _safe_float((correction or {}).get("degrees"))
+    if axis == "X" and degrees is not None and abs(abs(degrees) - 90.0) <= 1e-3:
+        return [float(size_cm[0]), float(size_cm[2]), float(size_cm[1])]
+    if axis == "Y" and degrees is not None and abs(abs(degrees) - 90.0) <= 1e-3:
+        return [float(size_cm[2]), float(size_cm[1]), float(size_cm[0])]
+    if axis == "Z" and degrees is not None and abs(abs(degrees) - 90.0) <= 1e-3:
+        return [float(size_cm[1]), float(size_cm[0]), float(size_cm[2])]
+    return [float(value) for value in size_cm]
+
+
+def _expected_authored_bbox_size_cm(recommendation: dict, authoring: dict) -> Optional[List[float]]:
+    source_size = _source_bbox_size_cm(recommendation)
+    if not source_size:
+        return None
+    expected = source_size
+    if authoring.get("apply_orientation_correction"):
+        expected = _apply_expected_orientation(expected, authoring.get("orientation_correction") or {})
+    scale = _safe_float(authoring.get("suggested_uniform_scale")) if authoring.get("apply_reference_scale") else None
+    if scale is not None:
+        expected = [value * scale for value in expected]
+    return expected
+
+
+def _recommendation_stage_size(recommendation: dict) -> dict:
+    for container in (recommendation.get("asset", {}) or {}, recommendation.get("recommendation", {}) or {}):
+        size = container.get("size", {}) or {}
+        if isinstance(size, dict) and size:
+            return size
+    return {}
+
+
+def _recommendation_stage_metadata(recommendation: dict) -> dict:
+    size = _recommendation_stage_size(recommendation)
+    bbox = size.get("bbox", {}) if isinstance(size, dict) else {}
+    metadata = bbox if isinstance(bbox, dict) else {}
+    return {
+        "stage_meters_per_unit": size.get("stage_meters_per_unit") or metadata.get("stage_meters_per_unit"),
+        "stage_up_axis": size.get("stage_up_axis") or metadata.get("stage_up_axis"),
+    }
+
+
+def build_simready_expectations(
+    recommendation: dict,
+    *,
+    source_usd: Optional[str] = None,
+    output_usd: Optional[str] = None,
+    authoring_overrides: Optional[dict] = None,
+) -> dict:
+    recommendation_body = recommendation.get("recommendation", {}) or {}
+    authoring = dict(recommendation_body.get("authoring", {}) or {})
+    if authoring_overrides:
+        authoring.update(authoring_overrides)
+
+    size = _recommendation_stage_size(recommendation)
+    stage_metadata = _recommendation_stage_metadata(recommendation)
+    orientation = authoring.get("orientation_correction") or {}
+    expected_up_axis = str(orientation.get("set_stage_up_axis") or stage_metadata.get("stage_up_axis") or "").upper() or None
+    source_bbox_size_cm = _source_bbox_size_cm(recommendation)
+    expected_bbox_size_cm = _expected_authored_bbox_size_cm(recommendation, authoring)
+    target_bbox = (
+        authoring.get("reference_target_bbox")
+        or (recommendation_body.get("size_recommendation", {}) or {}).get("reference_target_bbox")
+    )
+
+    return {
+        "schema_version": 1,
+        "source_usd": source_usd or authoring.get("source_usd_for_authoring"),
+        "output_usd": output_usd,
+        "units": {
+            "bbox_size": "cm",
+            "stage_distance": "stage_units",
+            "source_meters_per_unit": stage_metadata.get("stage_meters_per_unit"),
+            "expected_output_meters_per_unit": stage_metadata.get("stage_meters_per_unit"),
+            "source_up_axis": stage_metadata.get("stage_up_axis"),
+            "expected_output_up_axis": expected_up_axis,
+        },
+        "authoring": {
+            "apply_reference_scale": bool(authoring.get("apply_reference_scale")),
+            "suggested_uniform_scale": _safe_float(authoring.get("suggested_uniform_scale")),
+            "apply_orientation_correction": bool(authoring.get("apply_orientation_correction")),
+            "orientation_correction": orientation,
+        },
+        "source_bbox_size_cm": source_bbox_size_cm,
+        "expected_authored_bbox_size_cm": expected_bbox_size_cm,
+        "expected_authored_bbox_size_cm_order_invariant": sorted(expected_bbox_size_cm) if expected_bbox_size_cm else None,
+        "reference_target_bbox_cm": target_bbox,
+        "tolerance": {
+            "bbox_relative": 0.05,
+            "bbox_absolute_cm": 0.05,
+        },
+        "validation_points": [
+            "recommendation_authoring",
+            "exported_usd_default_prim",
+            "runtime_referenced_asset",
+            "runtime_drop_actor",
+            "render_artifacts",
+        ],
+    }
+
+
+def _validate_authored_bbox_size(output_path: str, recommendation: dict, authoring: dict) -> List[str]:
+    expected = _expected_authored_bbox_size_cm(recommendation, authoring)
+    if not expected:
+        return []
+    stage = open_stage(output_path)
+    actual = _stage_bbox_size_cm(stage)
+    if not actual:
+        return ["could not compute exported default prim bbox"]
+
+    expected_sorted = sorted(expected)
+    actual_sorted = sorted(actual)
+    failures = []
+    for index, (actual_value, expected_value) in enumerate(zip(actual_sorted, expected_sorted)):
+        tolerance = max(abs(expected_value) * 0.05, 0.05)
+        if abs(actual_value - expected_value) > tolerance:
+            failures.append(
+                "axis{} actual_cm={} expected_cm={} tolerance_cm={}".format(
+                    index,
+                    round(actual_value, 6),
+                    round(expected_value, 6),
+                    round(tolerance, 6),
+                )
+            )
+    return failures
 
 
 def _normalize_asset_key(asset_path: str) -> str:
@@ -344,6 +502,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="Do not apply recommendation.authoring.suggested_uniform_scale to the default prim",
     )
+    parser.add_argument(
+        "--skip-size-validation",
+        action="store_true",
+        help="Skip post-export bbox validation against the recommendation scale/orientation",
+    )
     args = parser.parse_args(argv)
 
     recommendation = load_json(args.recommendation_json)
@@ -410,6 +573,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     copied_paths: List[str] = []
     if not args.no_copy_relative_assets:
         copied_paths = _copy_asset_dependencies(asset_dependencies, output_path)
+
+    size_validation_failures = []
+    if not args.skip_size_validation:
+        size_validation_failures = _validate_authored_bbox_size(output_path, recommendation, authoring)
+        if size_validation_failures:
+            print("error: exported bbox size does not match the recommendation:")
+            for failure in size_validation_failures:
+                print(f"  {failure}")
+            return 3
+
     print(output_path)
     if rewritten_count:
         print(f"rewrote {rewritten_count} asset paths to relative paths")

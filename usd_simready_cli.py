@@ -9,9 +9,10 @@ import os
 import sys
 from typing import List, Optional
 
-from apply_static_furniture_simready import main as apply_static_main
+from apply_static_furniture_simready import build_simready_expectations, main as apply_static_main
 from content_physics_agent import main as content_physics_main
 from content_physics_supplement import main as physics_supplement_main
+from simready_diagnosis import diagnose_simready, format_diagnosis_summary
 from static_furniture import inspect_asset, load_json, recommend_from_reference, save_json
 from usd_inspector import build_detailed_report, open_stage
 
@@ -42,9 +43,17 @@ def _default_report_output(output_usd: str) -> str:
     return _replace_usd_suffix(os.path.abspath(output_usd), ".report.json")
 
 
-def _write_inspection_report(input_usd: str, output: Optional[str], pretty: bool, max_prims: int) -> str:
+def _write_inspection_report(
+    input_usd: str,
+    output: Optional[str],
+    pretty: bool,
+    max_prims: int,
+    simready_expectations: Optional[dict] = None,
+) -> str:
     stage = open_stage(input_usd)
     report = build_detailed_report(stage, input_usd, max_prims=max(0, max_prims))
+    if simready_expectations is not None:
+        report["simready_expectations"] = simready_expectations
     text = json.dumps(report, indent=2 if pretty else None, ensure_ascii=False)
     if output:
         with open(output, "w", encoding="utf-8") as handle:
@@ -58,6 +67,7 @@ def _write_recommendation(reference_json: str, input_usd: str, output: str, max_
     reference = load_json(reference_json)
     inspected = inspect_asset(input_usd, max_prims=max(0, max_prims))
     recommendation = recommend_from_reference(reference, inspected["report"], inspected["knowledge"])
+    recommendation["simready_expectations"] = build_simready_expectations(recommendation, source_usd=input_usd)
     save_json(output, recommendation, pretty=True)
     return output
 
@@ -86,6 +96,8 @@ def _apply_args(args: argparse.Namespace, input_usd: str, recommendation_json: s
         apply_args.append("--no-copy-relative-assets")
     if getattr(args, "no_apply_reference_scale", False):
         apply_args.append("--no-apply-reference-scale")
+    if getattr(args, "skip_size_validation", False):
+        apply_args.append("--skip-size-validation")
     return apply_args
 
 
@@ -107,7 +119,14 @@ def _cmd_process(args: argparse.Namespace) -> int:
 
     if args.report_output or args.emit_report:
         report_output = args.report_output or _default_report_output(output_usd)
-        _write_inspection_report(output_usd, report_output, True, args.max_prims)
+        recommendation = load_json(recommendation_output)
+        expectations = build_simready_expectations(
+            recommendation,
+            source_usd=args.input_usd,
+            output_usd=output_usd,
+            authoring_overrides={"apply_reference_scale": False} if args.no_apply_reference_scale else None,
+        )
+        _write_inspection_report(output_usd, report_output, True, args.max_prims, expectations)
         print(report_output)
 
     print(recommendation_output)
@@ -149,6 +168,18 @@ def _cmd_physics_supplement(args: argparse.Namespace) -> int:
     return physics_supplement_main(supplement_args)
 
 
+def _cmd_diagnose(args: argparse.Namespace) -> int:
+    recommendation = load_json(args.recommendation)
+    report = load_json(args.report)
+    runtime_report = load_json(args.runtime_report) if args.runtime_report else None
+    result = diagnose_simready(recommendation, report, runtime_report)
+    if args.output:
+        save_json(args.output, result, pretty=True)
+        print(args.output)
+    print(format_diagnosis_summary(result))
+    return 0 if result.get("status") in {"passed", "warning"} else 1
+
+
 def _add_apply_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--output-format",
@@ -170,6 +201,11 @@ def _add_apply_flags(parser: argparse.ArgumentParser) -> None:
         "--no-apply-reference-scale",
         action="store_true",
         help="Do not apply recommendation.authoring.suggested_uniform_scale to the default prim",
+    )
+    parser.add_argument(
+        "--skip-size-validation",
+        action="store_true",
+        help="Skip post-export bbox validation against the recommendation scale/orientation",
     )
 
 
@@ -242,6 +278,16 @@ def build_parser() -> argparse.ArgumentParser:
     supplement_parser.add_argument("--source-usd")
     supplement_parser.add_argument("--output")
     supplement_parser.set_defaults(func=_cmd_physics_supplement)
+
+    diagnose_parser = subparsers.add_parser(
+        "diagnose",
+        help="Compare SimReady expectations against inspection and optional runtime reports",
+    )
+    diagnose_parser.add_argument("--recommendation", required=True)
+    diagnose_parser.add_argument("--report", required=True)
+    diagnose_parser.add_argument("--runtime-report")
+    diagnose_parser.add_argument("--output")
+    diagnose_parser.set_defaults(func=_cmd_diagnose)
 
     return parser
 

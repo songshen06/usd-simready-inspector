@@ -29,6 +29,7 @@ Before running the workflow, verify these requirements:
 - Read access to the input USD/USDZ/USDA/USDC and its sidecar assets.
 - Write access to the output directory so copied textures, `gltf/pbr.mdl`, recommendation JSON, and report JSON can be emitted.
 - Optional: Omniverse Asset Validator or `omni-asset-cli` if the user asks for downstream validation beyond the repository's local report.
+- Current `usd_simready_cli.py apply/process` includes post-export bbox size validation by default. Use `--skip-size-validation` only when the user explicitly accepts bypassing scale/orientation validation.
 
 If `pxr` is missing, stop and tell the user the USD Python bindings are required; do not fabricate report results.
 
@@ -41,7 +42,7 @@ If `pxr` is missing, stop and tell the user the USD Python bindings are required
    - `asset_dependencies.missing_relative_count == 0`.
    - All asset dependencies are relative when portability is required.
    - `stage.up_axis` is `Z` for downstream SimReady/Omniverse workflows unless the user requested otherwise.
-   - `geometry.bbox.world.size` has plausible dimensions for the semantic class.
+   - `geometry.bbox.world.size` has plausible dimensions for the semantic class. For scaled assets, compare it to `recommendation.size_recommendation.reference_target_bbox` after orientation correction, not just to the source bbox.
    - Physics collision was authored on intended mesh targets.
 4. Report the output USD, recommendation JSON, report JSON, and the key validation facts.
 5. If the user asks for NVIDIA Content Agents Physics Agent, run `usd_simready_cli.py physics-agent INPUT_USD --dry-run` first. Only run the full command when a VLM API key and render backend are configured.
@@ -95,6 +96,7 @@ The `process` command can:
 - Rewrite exported USD asset paths to explicit relative paths such as `./textures/name.png` and `./gltf/pbr.mdl`.
 - Apply `authoring.suggested_uniform_scale` when `apply_reference_scale=true`.
 - Apply orientation correction when `apply_orientation_correction=true`, including Y-up to Z-up conversion and lying-down geometry fixes.
+- Validate the exported default prim bbox against the recommendation's scale/orientation expectations. A mismatch fails the command unless `--skip-size-validation` is provided.
 - Author static collision using the recommended USD approximation.
 
 The `physics-agent` command can:
@@ -120,6 +122,13 @@ python3 usd_simready_cli.py physics-supplement RECOMMENDATION_JSON \
   --source-usd INPUT_USD \
   --output RECOMMENDATION_WITH_PHYSICS_JSON
 ```
+
+## Size And Runtime Cautions
+
+- Do not assume a downstream runtime report is authoritative for asset size. First verify the exported USD directly with the repository report or USD BBoxCache. A downstream template or hit-test harness can misread a referenced asset's composed transform and report the unscaled source bbox.
+- For assets with `size_recommendation.status=scale`, the final output bbox should reflect `authoring.suggested_uniform_scale`; for Y-up sources with orientation correction, the tall/source-up axis should become Z in the report.
+- If a rendered physics video shows only the asset and no drop object, check whether the runtime harness used the exported USD bbox or the unscaled source bbox. A tiny drop box and a huge reported bbox are signs of downstream bbox misuse, not necessarily a bad SimReady export.
+- Treat files generated before the current recommendation/apply run as stale until their timestamp and report path match the latest output. Re-run `process --emit-report` when in doubt.
 
 ## Interpreting Common Results
 
