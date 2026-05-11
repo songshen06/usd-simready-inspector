@@ -386,6 +386,8 @@ Additional project docs:
 - [PROJECT_PROGRESS_REPORT.md](PROJECT_PROGRESS_REPORT.md)
 - [ARCHITECTURE_AND_FLOW.md](ARCHITECTURE_AND_FLOW.md)
 
+Intro slide decks (PowerPoint) and rebuild scripts live under [`presentation/`](presentation/README.md).
+
 ## License
 
 MIT

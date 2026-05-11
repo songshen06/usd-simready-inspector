@@ -20,4 +20,8 @@ group_reference_output/
 *.log
 *.tmp
 
+# Deck build: local venv and licensed template (symlink or copy)
+presentation/.venv/
+presentation/vendor/NVIDIA_PPT_Light_External_v1.potx
+
 # Keep published sample assets and sample JSON/CSV files tracked.

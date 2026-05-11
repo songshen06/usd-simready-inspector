@@ -1,0 +1,80 @@
+{
+  "template": "vendor/NVIDIA_PPT_Light_External_v1.potx",
+  "slides": [
+    {
+      "template_slide": 3,
+      "title": "USD SimReady Inspector",
+      "speaker": "Maintainer | github.com/songshen06",
+      "event": "Project Introduction | GitHub: songshen06/usd-simready-inspector"
+    },
+    {
+      "template_slide": 5,
+      "title": "Agenda",
+      "subtitle": "How this deck is organized",
+      "body": [
+        "Project scope and two main pipelines",
+        "Architecture flow slides (separate flow deck)",
+        "Repository development activity (cumulative commits)",
+        "Closing and next steps"
+      ]
+    },
+    {
+      "template_slide": 13,
+      "title": "What This Repository Delivers",
+      "subtitle": "CLI tools for USD inspection and SimReady recommendations",
+      "body": [
+        "General USD inspection plus knowledge_candidate generation for review and grouping",
+        "Static furniture SimReady recommendation, collider authoring, and optional runtime smoke tests",
+        "Unified usd_simready_cli.py process path for scale, orientation, collisions, and reports",
+        "Semantic metadata extraction (qcodes, classes, hierarchies, label_tags) for richer furniture signals"
+      ]
+    },
+    {
+      "template_slide": 14,
+      "title": "Two Pipelines at a Glance",
+      "subtitle": "Same codebase, different entry points",
+      "left": [
+        "General inspection",
+        "usd_inspector.py produces detailed report JSON",
+        "knowledge_candidate.py builds knowledge_candidate.json",
+        "CSV exports and taxonomy seeding for human review"
+      ],
+      "right": [
+        "Static furniture SimReady",
+        "Reference JSON from extract_static_furniture_reference.py",
+        "recommend_static_furniture_simready.py on new USD",
+        "apply_static_furniture_simready.py writes authored USD or USDA"
+      ]
+    },
+    {
+      "template_slide": 6,
+      "title": "Development Activity",
+      "subtitle": "Cumulative commits from repository history (clone date snapshot)"
+    },
+    {
+      "template_slide": 23,
+      "title": "Commit Velocity",
+      "subtitle": "Cumulative commit count by author date",
+      "source": "Source: git log on local clone of github.com/songshen06/usd-simready-inspector",
+      "chart_title": "Cumulative Commits",
+      "chart": {
+        "categories": ["2026-04-15", "2026-04-17", "2026-04-28", "2026-04-29", "2026-05-09"],
+        "series": [
+          {
+            "name": "Cumulative Commits",
+            "values": [2, 6, 7, 9, 12]
+          }
+        ],
+        "series_colors": ["76B900"],
+        "y_axis": {
+          "min": 0,
+          "max": 14,
+          "major_unit": 2
+        }
+      }
+    },
+    {
+      "template_slide": 58
+    }
+  ]
+}
