@@ -1,6 +1,6 @@
 /**
- * Builds usd-simready-inspector-flow.pptx via html2pptx (pptx skill).
- * Env: PPTX_HTML2PPTX_SCRIPTS — directory containing html2pptx.js (default: ~/my-agent-skills/skills/pptx/scripts)
+ * Flow deck → ../usd-simready-inspector-flow.pptx (html2pptx).
+ * PPTX_HTML2PPTX_SCRIPTS: folder containing html2pptx.js + node_modules
  */
 "use strict";
 
@@ -16,14 +16,15 @@ const html2pptx = require(path.join(skillScripts, "html2pptx.js"));
 async function main() {
   const dir = __dirname;
   const out = path.join(dir, "..", "usd-simready-inspector-flow.pptx");
+  const flow = path.join(dir, "flow");
 
   const pptx = new pptxgen();
   pptx.layout = "LAYOUT_16x9";
   pptx.author = "usd-simready-inspector";
   pptx.title = "USD SimReady Inspector — Flow";
 
-  await html2pptx(path.join(dir, "slide01-general.html"), pptx);
-  await html2pptx(path.join(dir, "slide02-furniture.html"), pptx);
+  await html2pptx(path.join(flow, "slide01-general.html"), pptx);
+  await html2pptx(path.join(flow, "slide02-furniture.html"), pptx);
 
   await pptx.writeFile({ fileName: out });
   console.log("Wrote", out);

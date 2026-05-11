@@ -9,6 +9,8 @@ venv/
 # OS/editor noise
 .DS_Store
 Thumbs.db
+~$*.pptx
+~$*.ppt
 
 # Local generated outputs
 inspection_reports/
@@ -21,7 +23,7 @@ group_reference_output/
 *.tmp
 
 # Deck build: local venv and licensed template (symlink or copy)
-presentation/.venv/
-presentation/vendor/NVIDIA_PPT_Light_External_v1.potx
+presentation/build/.venv/
+presentation/build/vendor/NVIDIA_PPT_Light_External_v1.potx
 
 # Keep published sample assets and sample JSON/CSV files tracked.
