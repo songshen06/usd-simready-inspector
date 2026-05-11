@@ -58,17 +58,17 @@
       "source": "Source: git log on local clone of github.com/songshen06/usd-simready-inspector",
       "chart_title": "Cumulative Commits",
       "chart": {
-        "categories": ["2026-04-15", "2026-04-17", "2026-04-28", "2026-04-29", "2026-05-09"],
+        "categories": ["2026-04-15", "2026-04-17", "2026-04-28", "2026-04-29", "2026-05-09", "2026-05-11"],
         "series": [
           {
             "name": "Cumulative Commits",
-            "values": [2, 6, 7, 9, 12]
+            "values": [2, 6, 7, 9, 12, 13]
           }
         ],
         "series_colors": ["76B900"],
         "y_axis": {
           "min": 0,
-          "max": 14,
+          "max": 16,
           "major_unit": 2
         }
       }

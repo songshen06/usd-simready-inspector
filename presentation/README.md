@@ -9,7 +9,8 @@ Intro slides for [github.com/songshen06/usd-simready-inspector](https://github.c
 | `usd-simready-inspector-flow.pptx` | Two 16:9 slides: general inspection pipeline + static furniture pipeline (aligned with `../ARCHITECTURE_AND_FLOW.md`). |
 | `manifest-nvidia.json` | Input for `build_nvidia_deck.py` from the **create-nvidia-presentation** skill. |
 | `usd-simready-inspector-nvidia-template.pptx` | Built deck: cover, agenda, overview, two-column summary, section divider, **line chart (template slide 23)**, closing. |
-| `build_flow_pptx.py` | Regenerates the flow deck (`python-pptx` only). |
+| `build_flow_pptx.py` | Fallback: regenerates the flow deck with `python-pptx` only. |
+| `html-flow/` | **Preferred:** HTML slides + `build-flow-html2pptx.js` (pptx skill **html2pptx**). |
 | `rebuild_nvidia.sh` | Regenerates the NVIDIA-template deck (needs skill path + `vendor/` template). |
 | `requirements-deck.txt` | Minimal Python deps for `build_flow_pptx.py` and running the skill scripts. |
 
@@ -32,10 +33,18 @@ Edit `manifest-nvidia.json` → slide with `"template_slide": 23` → `chart.cat
 
 ```bash
 cd presentation
+# Flow deck (html2pptx — requires pptx skill scripts under ~/my-agent-skills/skills/pptx/scripts with npm deps)
+node html-flow/build-flow-html2pptx.js
+
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-deck.txt
-.venv/bin/python build_flow_pptx.py
 ./rebuild_nvidia.sh
+```
+
+Fallback without Node/html2pptx:
+
+```bash
+.venv/bin/python build_flow_pptx.py
 ```
 
 Override the skill location if needed:
@@ -53,4 +62,6 @@ SKILL_SCRIPTS=/path/to/create-nvidia-presentation/skills/create-nvidia-presentat
 
 ## html2pptx note
 
-The **`pptx`** Agent skill can build richer slides via **html2pptx** if Node deps (`pptxgenjs`, `playwright`, …) are installed. These flow slides were generated with **`python-pptx`** so they build without Node.
+Flow slides are generated with **`html-flow/build-flow-html2pptx.js`**, which loads **`html2pptx.js`** from your **`pptx`** skill (`~/my-agent-skills/skills/pptx/scripts`). Override with `PPTX_HTML2PPTX_SCRIPTS=/path/to/pptx/scripts` if the skill lives elsewhere.
+
+Ensure that directory has `npm install` for `pptxgenjs`, `playwright`, `sharp`, etc., and run `npx playwright install chromium` once if needed.

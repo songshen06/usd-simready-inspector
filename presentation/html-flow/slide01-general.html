@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html {
+        background: #ffffff;
+      }
+      body {
+        width: 720pt;
+        height: 405pt;
+        margin: 0;
+        padding: 0;
+        background: #ffffff;
+        font-family: Arial, Helvetica, sans-serif;
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+        padding: 14pt 20pt 18pt 20pt;
+      }
+      h1 {
+        margin: 0 0 4pt 0;
+        font-size: 22pt;
+        color: #000000;
+        font-weight: bold;
+      }
+      .sub {
+        margin: 0 0 10pt 0;
+        font-size: 12pt;
+        color: #5e5e5e;
+      }
+      .col {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 4pt;
+        flex: 1;
+        min-height: 0;
+      }
+      .step {
+        background: #f5f5f5;
+        border: 2px solid #76b900;
+        border-radius: 8pt;
+        padding: 5pt 10pt;
+      }
+      .step p {
+        margin: 0;
+        font-size: 10pt;
+        color: #333333;
+        line-height: 1.2;
+      }
+      .arrow {
+        margin: 0;
+        text-align: center;
+        font-size: 11pt;
+        color: #76b900;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>General Inspection Pipeline</h1>
+    <p class="sub">From USD asset to CSV review artifacts</p>
+    <div class="col">
+      <div class="step"><p><b>USD Asset</b></p></div>
+      <p class="arrow">↓</p>
+      <div class="step">
+        <p><b>usd_inspector.py</b> → detailed report JSON</p>
+      </div>
+      <p class="arrow">↓</p>
+      <div class="step">
+        <p><b>knowledge_candidate.py</b> → knowledge_candidate.json</p>
+      </div>
+      <p class="arrow">↓</p>
+      <div class="step">
+        <p>
+          <b>reports_to_csv.py</b> → asset_summary / component_map /
+          candidate_review CSV
+        </p>
+      </div>
+      <p class="arrow">↓</p>
+      <div class="step">
+        <p>
+          <b>seed_taxonomy_from_csv.py</b> → enriched taxonomy &amp; group samples
+        </p>
+      </div>
+      <p class="arrow">↓</p>
+      <div class="step">
+        <p>
+          <b>build_group_reference_stats.py</b> → group_reference_stats.json / csv
+        </p>
+      </div>
+    </div>
+  </body>
+</html>
