@@ -216,19 +216,25 @@ authoring step also applies `authoring.suggested_uniform_scale` to the default
 prim so assets with incorrect source scale are normalized against the trusted
 reference library.
 
-### 5. Run a top-drop runtime smoke test
+### 5. Run a Docker top-drop runtime smoke test
 
 For assets where `recommendation.collision_plan.auto_apply_safe=true` and
-`recommendation.review_required=false`, pass the recommendation to
-`omni-asset-cli top-drop` with preserve-runtime enabled:
+`recommendation.review_required=false`, run the downstream runtime check through
+`omni-asset-cli physics-hit-test` on Linux with Isaac Sim Docker:
 
 ```bash
 python3 smoke_test_static_furniture_runtime.py \
   new_asset.static_furniture_recommendation.json \
-  --output new_asset.top_drop_smoke.json
+  --output new_asset.top_drop_smoke.json \
+  --runtime-docker-container isaac-sim
 ```
 
 Use `--dry-run` to inspect the command without invoking `omni-asset-cli`.
+If the Docker runtime fails, treat the result as data-flywheel feedback for the
+upstream authoring step: inspect `summary.json`, `runtime_report.json`, and
+`timeline.csv`, then adjust collider generation, target mesh paths, bbox/scale
+normalization, template placement, or contact-report instrumentation before
+rerunning the same Docker command.
 
 ### 6. Optional NVIDIA Content Agents Physics Agent
 

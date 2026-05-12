@@ -166,6 +166,14 @@ def _append_patch(target: List[Dict[str, Any]], patch: Dict[str, Any]) -> None:
         target.append(patch)
 
 
+def _runtime_contact_report(runtime_report: Dict[str, Any]) -> Dict[str, Any]:
+    return (((runtime_report.get("final_state", {}) or {}).get("contact_report", {}) or {}))
+
+
+def _runtime_checks(runtime_report: Dict[str, Any]) -> Dict[str, Any]:
+    return runtime_report.get("checks", {}) or {}
+
+
 def diagnose_simready(
     recommendation: Dict[str, Any],
     report: Dict[str, Any],
@@ -376,6 +384,49 @@ def diagnose_simready(
             )
         else:
             _check(checks, name="runtime_drop_actor_motion", expected=True, observed=box_descended, status="passed")
+
+        runtime_checks = _runtime_checks(runtime_report)
+        contact_report = _runtime_contact_report(runtime_report)
+        contact_report_detected = runtime_checks.get("contact_report_detected") or hit_analysis.get("contact_detected")
+        if contact_report_detected is True:
+            _check(
+                checks,
+                name="runtime_physx_contact_report",
+                expected=True,
+                observed=True,
+                status="passed",
+            )
+        else:
+            _append_unique(diagnosis, "runtime_contact_report_missing")
+            _append_patch(
+                suggested_patches,
+                {
+                    "target": "upstream_static_furniture_authoring",
+                    "operation": "improve_colliders_or_contact_targeting",
+                    "reason": (
+                        "Downstream Linux Docker runtime did not report a PhysX contact. "
+                        "Review collider generation, target mesh paths, bbox placement, and contact instrumentation."
+                    ),
+                    "observed": {
+                        "contact_evidence_level": hit_analysis.get("contact_evidence_level"),
+                        "contact_report": {
+                            "event_count": contact_report.get("event_count"),
+                            "target_event_count": contact_report.get("target_event_count"),
+                            "asset_subtree_event_count": contact_report.get("asset_subtree_event_count"),
+                            "guide_bbox_event_count": contact_report.get("guide_bbox_event_count"),
+                            "errors": contact_report.get("errors"),
+                        },
+                    },
+                },
+            )
+            _check(
+                checks,
+                name="runtime_physx_contact_report",
+                expected=True,
+                observed=contact_report_detected,
+                status="failed",
+                reason="missing strong PhysX contact evidence from Docker runtime",
+            )
 
         render_capture = ((runtime_report.get("final_state", {}) or {}).get("render_capture", {}) or {})
         render_count = _safe_float(render_capture.get("frame_count"))

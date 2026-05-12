@@ -1,21 +1,34 @@
 #!/usr/bin/env python3
-"""Run an omni-asset-cli top-drop smoke test from a furniture recommendation."""
+"""Run an omni-asset-cli Docker top-drop smoke test from a furniture recommendation."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import subprocess
 import sys
 from typing import Any, Dict, List, Optional
 
-from static_furniture import load_json, save_json
-
 
 def _default_report_path(recommendation_json: str) -> str:
     root, _ = os.path.splitext(os.path.abspath(recommendation_json))
     return root + ".top_drop_smoke.json"
+
+
+def load_json(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected JSON object: {path}")
+    return payload
+
+
+def save_json(path: str, payload: Dict[str, Any], pretty: bool = False) -> None:
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2 if pretty else None, ensure_ascii=False)
 
 
 def _recommendation_body(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -31,16 +44,40 @@ def _source_usd(data: Dict[str, Any], explicit_source: Optional[str]) -> str:
     return authoring.get("source_usd_for_authoring") or asset.get("authoring_source_file") or asset.get("file") or ""
 
 
-def _build_default_command(cli: str, source_usd: str, recommendation_json: str) -> List[str]:
-    return [
+def _build_default_command(
+    cli: str,
+    source_usd: str,
+    output_path: str,
+    runtime_docker_image: Optional[str],
+    runtime_docker_container: Optional[str],
+    docker_workspace: str,
+    docker_python: str,
+) -> List[str]:
+    out_dir = os.path.splitext(os.path.abspath(output_path))[0]
+    command = [
         cli,
-        "top-drop",
-        "--input",
+        "physics-hit-test",
         source_usd,
-        "--recommendation",
-        recommendation_json,
-        "--preserve-runtime",
+        "--template-scene",
+        "examples/mini_test.usda",
+        "--placement-mode",
+        "replace-table",
+        "--hit-mode",
+        "top-drop",
+        "--size-policy",
+        "preserve",
+        "--frames",
+        "240",
+        "--out",
+        out_dir,
     ]
+    if runtime_docker_container:
+        command.extend(["--runtime-docker-container", runtime_docker_container])
+    elif runtime_docker_image:
+        command.extend(["--runtime-docker-image", runtime_docker_image])
+    command.extend(["--docker-workspace", docker_workspace])
+    command.extend(["--docker-python", docker_python])
+    return command
 
 
 def _build_template_command(template: str, source_usd: str, recommendation_json: str, output: str) -> List[str]:
@@ -67,24 +104,29 @@ def _smoke_metadata(data: Dict[str, Any], source_usd: str) -> Dict[str, Any]:
         "bbox": size.get("bbox"),
         "footprint": size.get("footprint"),
         "preserve_runtime": True,
+        "runtime_policy": "linux_docker_only",
     }
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Pass a static furniture recommendation to omni-asset-cli top-drop with preserve-runtime enabled."
+        description="Pass a static furniture recommendation to omni-asset-cli physics-hit-test on Linux with Isaac Sim Docker."
     )
     parser.add_argument("recommendation_json", help="Recommendation JSON from recommend_static_furniture_simready.py")
     parser.add_argument("--input", dest="input_usd", help="Override source USD path")
     parser.add_argument("--cli", default="omni-asset-cli", help="omni-asset-cli executable name or path")
     parser.add_argument("--output", help="Path to write smoke-test JSON report")
+    parser.add_argument("--runtime-docker-image", help="Isaac Sim Docker image, such as nvcr.io/nvidia/isaac-sim:5.1.0")
+    parser.add_argument("--runtime-docker-container", help="Running Isaac Sim container name or ID")
+    parser.add_argument("--docker-workspace", default="/workspace/omni-asset-cli")
+    parser.add_argument("--docker-python", default="/isaac-sim/python.sh")
     parser.add_argument("--dry-run", action="store_true", help="Write the planned command without executing it")
     parser.add_argument("--force", action="store_true", help="Run even when review_required or auto_apply_safe=false")
     parser.add_argument(
         "--command-template",
         help=(
             "Override command. Supports {input}, {recommendation}, and {output}. "
-            "Example: 'omni-asset-cli top-drop --asset {input} --config {recommendation} --preserve-runtime'"
+            "Example: 'omni-asset-cli physics-hit-test {input} --out {output}.runtime --runtime-docker-container isaac-sim'"
         ),
     )
     args = parser.parse_args(argv)
@@ -108,10 +150,30 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(output_path)
         return 2
 
+    if not args.command_template and not (args.runtime_docker_image or args.runtime_docker_container):
+        metadata.update(
+            {
+                "status": "blocked",
+                "reason": "linux_isaac_sim_docker_required",
+                "next_step": "Pass --runtime-docker-image or --runtime-docker-container.",
+            }
+        )
+        save_json(output_path, metadata, pretty=True)
+        print(output_path)
+        return 2
+
     command = (
         _build_template_command(args.command_template, source_usd, recommendation_path, output_path)
         if args.command_template
-        else _build_default_command(args.cli, source_usd, recommendation_path)
+        else _build_default_command(
+            args.cli,
+            source_usd,
+            output_path,
+            args.runtime_docker_image,
+            args.runtime_docker_container,
+            args.docker_workspace,
+            args.docker_python,
+        )
     )
     metadata["command"] = command
 
