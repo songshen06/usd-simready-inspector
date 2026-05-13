@@ -165,6 +165,8 @@ def _cmd_physics_supplement(args: argparse.Namespace) -> int:
         supplement_args.extend(["--source-usd", args.source_usd])
     if args.output:
         supplement_args.extend(["--output", args.output])
+    if args.center_of_mass_mode:
+        supplement_args.extend(["--center-of-mass-mode", args.center_of_mass_mode])
     return physics_supplement_main(supplement_args)
 
 
@@ -277,6 +279,12 @@ def build_parser() -> argparse.ArgumentParser:
     supplement_parser.add_argument("--physics-predictions", required=True)
     supplement_parser.add_argument("--source-usd")
     supplement_parser.add_argument("--output")
+    supplement_parser.add_argument(
+        "--center-of-mass-mode",
+        choices=["none", "bbox_center", "lower_center", "semantic_weighted"],
+        default="none",
+        help="Optional centerOfMass enhancement written as explicit recommendation authoring data",
+    )
     supplement_parser.set_defaults(func=_cmd_physics_supplement)
 
     diagnose_parser = subparsers.add_parser(

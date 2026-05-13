@@ -137,6 +137,22 @@ python3 usd_simready_cli.py physics-supplement out/cup.recommendation.json \
   --output out/cup.recommendation.with_content_physics.json
 ```
 
+Center-of-mass estimation is available as an explicit opt-in supplement:
+
+```bash
+python3 usd_simready_cli.py physics-supplement out/cup.recommendation.json \
+  --physics-predictions out/content_physics/cup_service_27188751-e2a9-40f7-8745-37ca4bd64a33/predictions.jsonl \
+  --source-usd /home/horde/new_3D/cup.usd \
+  --center-of-mass-mode semantic_weighted \
+  --output out/cup.recommendation.with_content_physics.json
+```
+
+`semantic_weighted` treats Physics Agent output as component semantics and mass
+priors, then estimates `recommendation.authoring.center_of_mass` for downstream
+`UsdPhysics.MassAPI.centerOfMass` authoring. Use `bbox_center` or `lower_center`
+for deterministic fallbacks, and `none` to keep the default supplement-only
+behavior.
+
 The rule-based recommendation remains primary. For this cup asset, the merged
 output keeps `recommendation.furniture_class=decor` and adds
 `supplements.content_agent_physics.rule_constraints`, which fixes the rule-side

@@ -276,8 +276,8 @@ python3 usd_simready_cli.py physics-supplement \
   --output path/to/asset.recommendation.with_content_physics.json
 ```
 
-The merged recommendation keeps the existing `recommendation.authoring` values
-unchanged and adds:
+By default, the merged recommendation keeps the existing
+`recommendation.authoring` values unchanged and adds:
 
 ```text
 supplements.content_agent_physics
@@ -291,6 +291,24 @@ density, estimated mass, static/dynamic friction, restitution, and component
 reasoning. The merger may add review flags when the VLM-derived evidence
 conflicts with the rule-based furniture/decor assumption, for example an
 outlier mass for a decor asset.
+
+Optionally, use the Content Agents component semantics as a center-of-mass
+prior:
+
+```bash
+python3 usd_simready_cli.py physics-supplement \
+  path/to/asset.recommendation.json \
+  --physics-predictions out/content_physics/<session>/predictions.jsonl \
+  --source-usd path/to/asset.usd \
+  --center-of-mass-mode semantic_weighted \
+  --output path/to/asset.recommendation.with_content_physics.json
+```
+
+Supported modes are `none`, `bbox_center`, `lower_center`, and
+`semantic_weighted`. Non-`none` modes write
+`supplements.content_agent_physics.center_of_mass_estimate` and promote
+`recommendation.authoring.center_of_mass_policy` to `explicit`, so the existing
+`apply` command can author `UsdPhysics.MassAPI.centerOfMass`.
 
 Mass from Physics Agent is treated carefully. If the rule-based recommendation
 already plans a source-scale correction, the agent's mass is recorded as

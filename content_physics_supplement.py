@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from physics_prior.center_of_mass_estimator import SUPPORTED_CENTER_OF_MASS_MODES, estimate_center_of_mass
+
 
 def _safe_float(value: Any) -> Optional[float]:
     try:
@@ -288,12 +290,41 @@ def merge_recommendation_with_content_physics(
     recommendation: Dict[str, Any],
     predictions_jsonl: Path,
     source_usd: Optional[str] = None,
+    center_of_mass_mode: str = "none",
 ) -> Dict[str, Any]:
     merged = dict(recommendation)
     supplements = dict(merged.get("supplements", {}) or {})
     content_physics = build_content_physics_supplement(predictions_jsonl, source_usd=source_usd)
     content_physics["rule_constraints"] = _build_rule_constraints(merged)
     _add_mass_assessment(merged, content_physics)
+    center_of_mass_mode = str(center_of_mass_mode or "none").strip().lower()
+    if center_of_mass_mode != "none":
+        center_of_mass = estimate_center_of_mass(
+            merged,
+            content_physics.get("components", []) or [],
+            mode=center_of_mass_mode,
+            source_usd=source_usd,
+        )
+        content_physics["center_of_mass_estimate"] = center_of_mass
+        local_position = center_of_mass.get("local_position")
+        if isinstance(local_position, list) and len(local_position) == 3:
+            rec = dict(merged.get("recommendation", {}) or {})
+            authoring = dict(rec.get("authoring", {}) or {})
+            authoring.update(
+                {
+                    "author_center_of_mass": True,
+                    "center_of_mass_policy": "explicit",
+                    "center_of_mass": local_position,
+                    "center_of_mass_source": "content_agent_physics",
+                    "center_of_mass_estimation": {
+                        "method": center_of_mass.get("method"),
+                        "confidence": center_of_mass.get("confidence"),
+                        "basis": center_of_mass.get("basis"),
+                    },
+                }
+            )
+            rec["authoring"] = authoring
+            merged["recommendation"] = rec
     content_physics["review_flags"] = _build_review_flags(merged, content_physics)
     supplements["content_agent_physics"] = content_physics
     merged["supplements"] = supplements
@@ -314,6 +345,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--physics-predictions", type=Path, required=True, help="Physics Agent predictions.jsonl")
     parser.add_argument("--source-usd", help="Optional source USD path recorded in the supplement")
     parser.add_argument("--output", type=Path, help="Output recommendation JSON. Defaults to *.with_physics.json")
+    parser.add_argument(
+        "--center-of-mass-mode",
+        choices=sorted(SUPPORTED_CENTER_OF_MASS_MODES),
+        default="none",
+        help=(
+            "Optional centerOfMass enhancement. non-none modes write "
+            "recommendation.authoring.center_of_mass and set policy=explicit."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -325,6 +365,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         recommendation,
         args.physics_predictions,
         source_usd=args.source_usd,
+        center_of_mass_mode=args.center_of_mass_mode,
     )
     output = args.output
     if output is None:
