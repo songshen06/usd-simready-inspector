@@ -98,6 +98,15 @@ def _apply_args(args: argparse.Namespace, input_usd: str, recommendation_json: s
         apply_args.append("--no-apply-reference-scale")
     if getattr(args, "skip_size_validation", False):
         apply_args.append("--skip-size-validation")
+    if getattr(args, "author_rigid_body", False):
+        apply_args.append("--author-rigid-body")
+    if getattr(args, "author_center_of_mass", False):
+        apply_args.append("--author-center-of-mass")
+    if getattr(args, "no_author_center_of_mass", False):
+        apply_args.append("--no-author-center-of-mass")
+    center_of_mass_policy = getattr(args, "center_of_mass_policy", None)
+    if center_of_mass_policy:
+        apply_args.extend(["--center-of-mass-policy", center_of_mass_policy])
     return apply_args
 
 
@@ -208,6 +217,26 @@ def _add_apply_flags(parser: argparse.ArgumentParser) -> None:
         "--skip-size-validation",
         action="store_true",
         help="Skip post-export bbox validation against the recommendation scale/orientation",
+    )
+    parser.add_argument(
+        "--author-rigid-body",
+        action="store_true",
+        help="Override recommendation.authoring.author_rigid_body and author a kinematic rigid body on the default prim",
+    )
+    parser.add_argument(
+        "--author-center-of-mass",
+        action="store_true",
+        help="Author UsdPhysics.MassAPI centerOfMass on the default prim",
+    )
+    parser.add_argument(
+        "--no-author-center-of-mass",
+        action="store_true",
+        help="Do not author UsdPhysics.MassAPI centerOfMass, even if the recommendation enables it",
+    )
+    parser.add_argument(
+        "--center-of-mass-policy",
+        choices=["bbox_center", "explicit", "none"],
+        help="How to choose centerOfMass when authoring it. explicit uses recommendation.authoring.center_of_mass.",
     )
 
 

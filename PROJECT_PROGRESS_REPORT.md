@@ -155,6 +155,7 @@
 - 对目标 mesh prim 应用 `PhysicsMeshCollisionAPI`
 - 写入 `physics:collisionEnabled = true`
 - 写入 `physics:approximation = ...`
+- 默认从 default prim 的 bbox center 写入 `MassAPI.centerOfMass`，可显式关闭
 
 当前不会自动做：
 
@@ -162,7 +163,7 @@
 - articulation authoring
 - vehicle 相关 authoring
 - dynamic rigid body 流程
-- mass / density / friction / restitution 推荐与 authoring
+- mass / density / friction / restitution 推荐与默认 authoring
 
 ## Validation Completed
 

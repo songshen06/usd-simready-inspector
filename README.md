@@ -361,6 +361,7 @@ Current authoring behavior is intentionally conservative:
 - applies `PhysicsMeshCollisionAPI`
 - writes `physics:collisionEnabled = true`
 - writes `physics:approximation = ...`
+- authors `MassAPI.centerOfMass` from the default prim bbox center by default; use `author_center_of_mass=false`, `center_of_mass_policy=none`, or `--no-author-center-of-mass` to skip it
 - only marks recommendations auto-apply safe when size, mesh targets, and Stage 1 classification are suitable for downstream runtime smoke testing
 
 It does not currently auto-author:

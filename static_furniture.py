@@ -974,6 +974,8 @@ def recommend_from_reference(
                 "apply_orientation_correction": bool(orientation_recommendation.get("apply")),
                 "orientation_correction": orientation_recommendation if orientation_recommendation.get("apply") else {},
                 "author_rigid_body": False,
+                "author_center_of_mass": True,
+                "center_of_mass_policy": "bbox_center",
                 "kinematic_mode": "static",
             },
         },

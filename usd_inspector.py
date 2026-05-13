@@ -172,6 +172,15 @@ def _get_attr_value(attr: Any) -> Any:
     return None
 
 
+def _get_authored_attr_value(attr: Any) -> Any:
+    try:
+        if attr and attr.IsValid() and attr.HasAuthoredValueOpinion():
+            return _to_serializable(attr.Get())
+    except Exception:
+        return None
+    return None
+
+
 def _asset_path_value_to_string(value: Any) -> Optional[str]:
     if isinstance(value, Sdf.AssetPath):
         return value.path or value.resolvedPath or None
@@ -767,7 +776,30 @@ def inspect_asset_dependencies(stage: Usd.Stage, input_path: str, max_prims: int
     }
 
 
+def _applied_api_schema_token_matches(prim: Usd.Prim, schema_cls: Any) -> bool:
+    try:
+        applied = {str(item) for item in prim.GetAppliedSchemas()}
+    except Exception:
+        applied = set()
+    if not applied:
+        return False
+    schema_name = getattr(schema_cls, "__name__", "")
+    candidates = {schema_name}
+    if schema_name.endswith("API"):
+        candidates.add(f"Physics{schema_name}")
+    return bool(applied.intersection(candidates))
+
+
 def _schema_applied(prim: Usd.Prim, schema_cls: Any) -> bool:
+    if schema_cls is None:
+        return False
+    try:
+        if hasattr(prim, "HasAPI") and prim.HasAPI(schema_cls):
+            return True
+    except Exception:
+        pass
+    if str(getattr(schema_cls, "__name__", "")).endswith("API"):
+        return _applied_api_schema_token_matches(prim, schema_cls)
     try:
         api = schema_cls(prim)
         if hasattr(api, "GetPrim"):
@@ -923,11 +955,11 @@ def inspect_physics(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
                     {
                         "path": prim.GetPath().pathString,
                         "schema": "UsdPhysics.MassAPI",
-                        "mass": _get_attr_value(mass.GetMassAttr()),
-                        "density": _get_attr_value(mass.GetDensityAttr()),
-                        "center_of_mass": _get_attr_value(mass.GetCenterOfMassAttr()),
-                        "diagonal_inertia": _get_attr_value(mass.GetDiagonalInertiaAttr()),
-                        "principal_axes": _get_attr_value(mass.GetPrincipalAxesAttr()),
+                        "mass": _get_authored_attr_value(mass.GetMassAttr()),
+                        "density": _get_authored_attr_value(mass.GetDensityAttr()),
+                        "center_of_mass": _get_authored_attr_value(mass.GetCenterOfMassAttr()),
+                        "diagonal_inertia": _get_authored_attr_value(mass.GetDiagonalInertiaAttr()),
+                        "principal_axes": _get_authored_attr_value(mass.GetPrincipalAxesAttr()),
                     }
                 )
                 physics_schemas_detected.add("UsdPhysics.MassAPI")

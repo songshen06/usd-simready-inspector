@@ -36,6 +36,18 @@ def _apply_collision_to_prim(prim, approximation: str) -> None:
     mesh_collision_api.CreateApproximationAttr(approximation)
 
 
+def _as_vec3f(values) -> Optional[Gf.Vec3f]:
+    if not isinstance(values, (list, tuple)) or len(values) != 3:
+        return None
+    parsed = []
+    for value in values:
+        try:
+            parsed.append(float(value))
+        except Exception:
+            return None
+    return Gf.Vec3f(parsed[0], parsed[1], parsed[2])
+
+
 def _safe_float(value) -> Optional[float]:
     try:
         if value in (None, ""):
@@ -44,6 +56,20 @@ def _safe_float(value) -> Optional[float]:
     except Exception:
         return None
     return result if result > 0.0 else None
+
+
+def _bool_value(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "0", "false", "no", "off", "none"}:
+            return False
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+    return bool(value)
 
 
 def _apply_reference_scale(stage, scale: float) -> bool:
@@ -119,6 +145,41 @@ def _stage_bbox_size_cm(stage) -> Optional[List[float]]:
     meters_per_unit = UsdGeom.GetStageMetersPerUnit(stage)
     scale_to_cm = float(meters_per_unit) * 100.0
     return [float(value) * scale_to_cm for value in bbox.GetSize()]
+
+
+def _default_prim_local_bbox_center(stage) -> Optional[Gf.Vec3f]:
+    default_prim = stage.GetDefaultPrim()
+    if not default_prim or not default_prim.IsValid():
+        return None
+    bbox_cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_], useExtentsHint=True)
+    bbox = bbox_cache.ComputeLocalBound(default_prim).ComputeAlignedRange()
+    if bbox.IsEmpty():
+        return None
+    center = bbox.GetMidpoint()
+    return Gf.Vec3f(float(center[0]), float(center[1]), float(center[2]))
+
+
+def _apply_center_of_mass(stage, authoring: dict) -> Optional[List[float]]:
+    default_prim = stage.GetDefaultPrim()
+    if not default_prim or not default_prim.IsValid():
+        return None
+
+    policy = str(authoring.get("center_of_mass_policy") or "bbox_center").strip().lower()
+    if policy in {"", "none", "unset"}:
+        return None
+
+    center = None
+    if policy in {"explicit", "authored"}:
+        center = _as_vec3f(authoring.get("center_of_mass"))
+    elif policy == "bbox_center":
+        center = _default_prim_local_bbox_center(stage)
+
+    if center is None:
+        return None
+
+    mass_api = UsdPhysics.MassAPI.Apply(default_prim)
+    mass_api.CreateCenterOfMassAttr(center)
+    return [float(center[0]), float(center[1]), float(center[2])]
 
 
 def _source_bbox_size_cm(recommendation: dict) -> Optional[List[float]]:
@@ -221,6 +282,8 @@ def build_simready_expectations(
             "suggested_uniform_scale": _safe_float(authoring.get("suggested_uniform_scale")),
             "apply_orientation_correction": bool(authoring.get("apply_orientation_correction")),
             "orientation_correction": orientation,
+            "author_center_of_mass": _bool_value(authoring.get("author_center_of_mass"), True),
+            "center_of_mass_policy": authoring.get("center_of_mass_policy") or "bbox_center",
         },
         "source_bbox_size_cm": source_bbox_size_cm,
         "expected_authored_bbox_size_cm": expected_bbox_size_cm,
@@ -507,11 +570,41 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="Skip post-export bbox validation against the recommendation scale/orientation",
     )
+    parser.add_argument(
+        "--author-rigid-body",
+        action="store_true",
+        help="Override recommendation.authoring.author_rigid_body and author a kinematic rigid body on the default prim",
+    )
+    parser.add_argument(
+        "--author-center-of-mass",
+        action="store_true",
+        help="Author UsdPhysics.MassAPI centerOfMass on the default prim",
+    )
+    parser.add_argument(
+        "--no-author-center-of-mass",
+        action="store_true",
+        help="Do not author UsdPhysics.MassAPI centerOfMass, even if the recommendation enables it",
+    )
+    parser.add_argument(
+        "--center-of-mass-policy",
+        choices=["bbox_center", "explicit", "none"],
+        help="How to choose centerOfMass when authoring it. explicit uses recommendation.authoring.center_of_mass.",
+    )
     args = parser.parse_args(argv)
 
     recommendation = load_json(args.recommendation_json)
     recommendation_body = recommendation.get("recommendation", {}) or {}
-    authoring = (recommendation_body.get("authoring", {}) or {})
+    authoring = dict(recommendation_body.get("authoring", {}) or {})
+    if "author_center_of_mass" not in authoring:
+        authoring["author_center_of_mass"] = True
+    if args.author_rigid_body:
+        authoring["author_rigid_body"] = True
+    if args.author_center_of_mass:
+        authoring["author_center_of_mass"] = True
+    if args.no_author_center_of_mass:
+        authoring["author_center_of_mass"] = False
+    if args.center_of_mass_policy:
+        authoring["center_of_mass_policy"] = args.center_of_mass_policy
     collision_plan = recommendation_body.get("collision_plan", {}) or {}
     target_mesh_paths = authoring.get("target_mesh_paths") or collision_plan.get("target_mesh_paths") or []
     approximation = authoring.get("approximation") or collision_plan.get("usd_approximation") or "convexHull"
@@ -556,6 +649,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         if scale is not None and _apply_reference_scale(stage, scale):
             applied_reference_scale = scale
 
+    authored_center_of_mass = None
+    if _bool_value(authoring.get("author_rigid_body")) or _bool_value(authoring.get("author_center_of_mass"), True):
+        authored_center_of_mass = _apply_center_of_mass(stage, authoring)
+
     rewritten_count = 0
     if not args.no_copy_relative_assets:
         rewritten_count = _rewrite_asset_paths_to_relative(stage, asset_dependencies)
@@ -596,6 +693,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"applied reference uniform scale {applied_reference_scale}")
     if applied_orientation:
         print("applied orientation correction")
+    if authored_center_of_mass is not None:
+        print(f"authored centerOfMass {authored_center_of_mass}")
     if not applied_paths:
         print("warning: no target mesh paths were authored")
     return 0
