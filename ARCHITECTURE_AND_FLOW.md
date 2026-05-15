@@ -209,6 +209,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant U as User
+    participant V as omni-asset-cli
     participant R as extract_static_furniture_reference.py
     participant S as static_furniture.py
     participant Q as recommend_static_furniture_simready.py
@@ -218,6 +219,10 @@ sequenceDiagram
     R->>S: inspect + extract furniture features
     S-->>R: asset references + grouped reference
     R-->>U: reference JSON
+
+    U->>V: new USD mesh preflight
+    V->>V: validate topology / manifold / normals / zero-area faces
+    V-->>U: pass or repair-first defects
 
     U->>Q: reference JSON + new USD
     Q->>S: inspect new asset + match reference group
@@ -250,6 +255,7 @@ python3 reports_to_csv.py --input-dir inspection_reports --output-dir csv_export
 ### 2. 静态家具推荐链路
 
 ```bash
+python ~/omni-asset-cli/omni_asset_cli.py validate /path/to/new_asset.usd --profile stage1-furniture
 python3 extract_static_furniture_reference.py "<assets_dir>" --recursive --output furniture_reference.json
 python3 recommend_static_furniture_simready.py furniture_reference.json /path/to/new_asset.usd --output new_asset.recommendation.json
 python3 apply_static_furniture_simready.py /path/to/new_asset.usd new_asset.recommendation.json --output new_asset.simready_static.usda
@@ -263,9 +269,15 @@ python3 apply_static_furniture_simready.py /path/to/new_asset.usd new_asset.reco
 
 适合：
 
+- 先发现会影响 collider 的 mesh 破面、拓扑、法线和零面积面问题
 - 家具静态 collider 推荐
 - 尺寸参考与缩放建议
 - 快速 author 保守的静态碰撞属性
+
+统一入口 `python3 usd_simready_cli.py process ...` 已默认执行这一步
+mesh preflight。若 preflight 发现 topology、manifold、zero-area face、
+normal 或 weld 缺陷，流程会在参数设定和 collider authoring 前停止，
+要求先修复源 mesh。
 
 ---
 

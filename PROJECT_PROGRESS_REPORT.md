@@ -21,6 +21,59 @@
 - 使用 `reference JSON + 新 USD` 输出静态家具 recommendation JSON
 - 在 recommendation JSON 中输出尺寸参考与缩放建议
 - 根据 recommendation JSON 将静态 collider 参数写回 USD
+- 默认从 default prim bbox center 写入 `UsdPhysics.MassAPI.centerOfMass`
+- 通过 Content Agents Physics Agent 输出做补充证据，并可选增强重心估计
+
+## 2026-05-13 Project Record
+
+第一阶段目标已经明确为：**优先服务摆件与静态家具类资产**。当前项目不是通用 SimReady 全自动 authoring 系统，而是先把摆件/家具这类静态可交互资产的检查、推荐、authoring 和验证链路打通。
+
+当前下游判定逻辑分为三层：
+
+1. `bbox / scale gate`
+   - 将 USD bbox 统一转成 cm
+   - 生成 `bbox_size`、`footprint`、`height_band`、`size_bucket`、`volume_estimate_m3`
+   - 根据 reference median bbox 或内置 cup/mug 尺寸判断是否需要 scale correction
+   - 如果 bbox、footprint 或 size recommendation 不可靠，则进入 review
+
+2. `semantic / affordance gate`
+   - 通过文件名、语义 metadata、semantic candidates 判断 `furniture_class`
+   - 当前支持 `chair`、`sofa`、`stool`、`bench`、`ottoman`、`table`、`desk`、`cabinet`、`shelf`、`storage`、`decor`
+   - 派生 `seat_like`、`storage_like`、`support_surface_likely`、`has_legs` 等 affordance 信号
+   - `decor` 不作为传统 furniture，但纳入第一阶段 `stage1_supported`
+
+3. `physics authoring policy gate`
+   - 第一阶段默认只做静态 collider 与保守物理 authoring
+   - `author_rigid_body=false`
+   - `author_center_of_mass=true`
+   - `center_of_mass_policy=bbox_center`
+   - 只有当 `review_required=false`、target mesh 存在、collider recommendation 有效且资产属于 furniture/decor 时，才标记 `collision_plan.auto_apply_safe=true`
+
+重心设定策略已经形成：
+
+- 默认路径：使用 default prim local bbox center 写入 `MassAPI.centerOfMass`
+- 显式路径：如果 recommendation 提供 `center_of_mass_policy=explicit` 和 `center_of_mass=[x,y,z]`，则直接写入该位置
+- 增强路径：Content Agents Physics Agent 只作为外部多模态补充能力，输出 component semantics / material / physical property priors；项目自身的 `physics_prior` 层再将这些信号转换为 `semantic_weighted` COM estimate
+
+Content Agents 集成的原则是：
+
+- rule engine 先定义边界：家具/摆件类别、目标尺寸、scale context、质量范围、collider policy
+- Content Agents 补充材料、摩擦、质量先验、组件语义和可选 COM estimate
+- VLM 输出不直接推翻 rule class
+- VLM mass 必须经过 rule bounds 和 scale context 检查；源尺度不可信时只作为 evidence，不作为 authoring mass
+
+对应代码入口：
+
+- `static_furniture.py`: 第一阶段 furniture/decor 判定、bbox/scale gate、authoring policy
+- `apply_static_furniture_simready.py`: collider、scale/orientation correction、bbox/explicit centerOfMass authoring
+- `content_physics_supplement.py`: Content Agents Physics Agent 输出合并与 rule bounds 检查
+- `physics_prior/`: 组件质量先验和可选 COM estimate
+- `usd_simready_cli.py`: 统一 CLI，包含 `physics-agent`、`physics-supplement`、`apply`、`process`
+
+相关 GitHub 提交：
+
+- `9da4060 Add optional content-agent center of mass priors`
+- `f3e0ce6 Focus phase one furniture and decor mass authoring`
 
 ## Implemented Scripts
 
@@ -63,7 +116,21 @@
   - 输出 recommendation JSON
 
 - [apply_static_furniture_simready.py](/mnt/c/Users/songs/Downloads/usd_inspect/apply_static_furniture_simready.py)
-  - 根据 recommendation JSON 将静态 collider 参数 author 到 USD
+  - 根据 recommendation JSON 将静态 collider 和保守 MassAPI centerOfMass 参数 author 到 USD
+
+- [content_physics_agent.py](/mnt/c/Users/songs/Downloads/usd_inspect/content_physics_agent.py)
+  - 生成 Content Agents Physics Agent 配置
+  - 调用外部 `physics-agent` CLI
+  - 记录 `predictions.jsonl`、`results.json`、`scene_physics.usda` 等输出位置
+
+- [content_physics_supplement.py](/mnt/c/Users/songs/Downloads/usd_inspect/content_physics_supplement.py)
+  - 将 Physics Agent 输出合并进 recommendation
+  - 保持 rule-based recommendation 为主
+  - 可选通过 `--center-of-mass-mode semantic_weighted` 生成 explicit COM recommendation
+
+- [physics_prior/](/mnt/c/Users/songs/Downloads/usd_inspect/physics_prior)
+  - 将 component semantics、material、role、mass/density prior 转成相对质量权重
+  - 支持 `bbox_center`、`lower_center`、`semantic_weighted` 三类 COM estimate
 
 ## Static Furniture Feature Set
 
@@ -165,6 +232,8 @@
 - dynamic rigid body 流程
 - mass / density / friction / restitution 推荐与默认 authoring
 
+Content Agents supplement 可以记录 mass / density / friction / restitution evidence，但默认不直接 author 这些值。
+
 ## Validation Completed
 
 ### Environment Validation
@@ -188,6 +257,8 @@
 - `PhysicsMeshCollisionAPI`
 - `physics:collisionEnabled`
 - `physics:approximation`
+- `PhysicsMassAPI`
+- `physics:centerOfMass`
 
 ### Batch Validation
 
@@ -217,11 +288,11 @@
 
 - 静态家具分类仍然主要是规则驱动，不是学习式分类
 - `support_structure` 目前部分依赖语义和文件命名，不是纯几何识别
-- 材质目前只保留材质大类，没有进入 physics material recommendation
-- recommendation 当前重点是 collider 和尺寸参考，不包含摩擦、质量、密度等参数推荐
-- recommendation 会输出尺寸建议，但不会自动修改 USD 的几何尺度
+- 材质在规则层仍只保留材质大类；Content Agents supplement 可补充 material / friction / density evidence
+- recommendation 当前重点是 collider、尺寸参考和保守 COM，不默认 author 摩擦、质量、密度等动态物理参数
+- recommendation 会输出尺寸建议，apply 阶段可以按 `authoring.apply_reference_scale` 应用 uniform scale
 - reference 批量构建时会看到部分外部引用缺失 warning，但不阻断处理
-- 项目目录不是 git 仓库，当前状态无法通过提交历史回溯
+- 大规模运行产物保留在本地 `out/`，不进入普通 Git history
 
 ## Recommended Trial Workflow
 
@@ -246,6 +317,7 @@ python3 apply_static_furniture_simready.py /path/to/new_asset.usd new_asset.reco
 当前实现适合用于：
 
 - 家具静态 SimReady 推荐试用
+- 摆件 / tabletop decor / container 类静态资产试用
 - 后续规则微调
 - 后续小规模人工复核
 

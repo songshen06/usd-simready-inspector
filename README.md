@@ -100,7 +100,8 @@ python3 -c "from pxr import Usd; print('USD OK')"
 
 ### 0. Unified one-step processing
 
-For most assets, use the unified CLI. It generates the recommendation, applies
+For most assets, use the unified CLI. It first runs a source mesh preflight
+through `~/omni-asset-cli`, then generates the recommendation, applies
 scale/orientation/collider/resource fixes, and can emit a final inspection
 report:
 
@@ -115,6 +116,20 @@ python3 usd_simready_cli.py process \
 The `process` command writes a self-contained USD package: relative texture and
 MDL references, copied dependencies, optional reference scale, optional
 orientation correction, and static collision authoring.
+
+The mesh preflight uses:
+
+```bash
+python ~/omni-asset-cli/omni_asset_cli.py validate \
+  /path/to/new_asset.usd \
+  --profile stage1-furniture
+```
+
+If topology, manifold, zero-area face, normal, or weld defects are detected,
+`process` stops before collider and parameter authoring. Repair the source mesh
+first, then rerun `process`. For explicit experiments only, use
+`--allow-mesh-defects`; to bypass the external preflight use
+`--skip-mesh-preflight`.
 
 For large mesh-heavy assets, prefer binary USD crate output to avoid very large
 ASCII USDA files:

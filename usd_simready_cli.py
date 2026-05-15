@@ -6,8 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from apply_static_furniture_simready import build_simready_expectations, main as apply_static_main
 from content_physics_agent import main as content_physics_main
@@ -15,6 +16,15 @@ from content_physics_supplement import main as physics_supplement_main
 from simready_diagnosis import diagnose_simready, format_diagnosis_summary
 from static_furniture import inspect_asset, load_json, recommend_from_reference, save_json
 from usd_inspector import build_detailed_report, open_stage
+
+
+MESH_BLOCKING_RULES = {
+    "ValidateTopologyChecker",
+    "ManifoldChecker",
+    "ZeroAreaFaceChecker",
+    "NormalsValidChecker",
+    "WeldChecker",
+}
 
 
 def _replace_usd_suffix(path: str, suffix: str) -> str:
@@ -41,6 +51,86 @@ def _default_recommendation_output(input_usd: str, output_path: Optional[str] = 
 
 def _default_report_output(output_usd: str) -> str:
     return _replace_usd_suffix(os.path.abspath(output_usd), ".report.json")
+
+
+def _default_mesh_preflight_output(input_usd: str, output_usd: str) -> str:
+    root, _ = os.path.splitext(os.path.abspath(output_usd))
+    return root + ".mesh_preflight.json"
+
+
+def _default_omni_asset_python(omni_asset_cli: str) -> str:
+    repo_root = os.path.dirname(os.path.abspath(os.path.expanduser(omni_asset_cli)))
+    candidate = os.path.join(repo_root, ".venv", "bin", "python")
+    return candidate if os.path.exists(candidate) else sys.executable
+
+
+def _mesh_blocking_issues(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    issues = payload.get("issues") or []
+    blocking: List[Dict[str, Any]] = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        if issue.get("rule") not in MESH_BLOCKING_RULES:
+            continue
+        if issue.get("severity") not in {"ERROR", "FAILURE", "WARNING"}:
+            continue
+        blocking.append(issue)
+    return blocking
+
+
+def _run_mesh_preflight(args: argparse.Namespace, input_usd: str, output_usd: str) -> int:
+    if getattr(args, "skip_mesh_preflight", False):
+        return 0
+
+    omni_asset_cli = os.path.abspath(os.path.expanduser(args.omni_asset_cli))
+    omni_asset_python = os.path.abspath(os.path.expanduser(args.omni_asset_python or _default_omni_asset_python(omni_asset_cli)))
+    preflight_output = args.mesh_preflight_output or _default_mesh_preflight_output(input_usd, output_usd)
+    os.makedirs(os.path.dirname(os.path.abspath(preflight_output)), exist_ok=True)
+
+    if not os.path.exists(omni_asset_cli):
+        print(
+            "Mesh preflight blocked: omni-asset-cli was not found at "
+            f"{omni_asset_cli}. Use --omni-asset-cli or --skip-mesh-preflight.",
+            file=sys.stderr,
+        )
+        return 2
+
+    command = [
+        omni_asset_python,
+        omni_asset_cli,
+        "validate",
+        input_usd,
+        "--profile",
+        "stage1-furniture",
+        "--output-json",
+        preflight_output,
+    ]
+    completed = subprocess.run(command, check=False, text=True, capture_output=True)
+    if completed.returncode != 0:
+        if completed.stdout:
+            print(completed.stdout, file=sys.stderr)
+        if completed.stderr:
+            print(completed.stderr, file=sys.stderr)
+        print(f"Mesh preflight command failed: {preflight_output}", file=sys.stderr)
+        return completed.returncode
+
+    payload = load_json(preflight_output)
+    blocking_issues = _mesh_blocking_issues(payload)
+    print(preflight_output)
+    if blocking_issues and not getattr(args, "allow_mesh_defects", False):
+        rule_counts: Dict[str, int] = {}
+        for issue in blocking_issues:
+            rule = str(issue.get("rule") or "UnknownRule")
+            rule_counts[rule] = rule_counts.get(rule, 0) + 1
+        summary = ", ".join(f"{rule}={count}" for rule, count in sorted(rule_counts.items()))
+        print(
+            "Mesh preflight blocked SimReady parameter authoring. "
+            f"Repair mesh defects first, then rerun process. Blocking rules: {summary}. "
+            "Use --allow-mesh-defects only for explicit override.",
+            file=sys.stderr,
+        )
+        return 3
+    return 0
 
 
 def _write_inspection_report(
@@ -117,6 +207,10 @@ def _cmd_apply(args: argparse.Namespace) -> int:
 def _cmd_process(args: argparse.Namespace) -> int:
     output_usd = args.output or _default_process_output(args.input_usd, args.output_dir, args.output_format)
     os.makedirs(os.path.dirname(os.path.abspath(output_usd)), exist_ok=True)
+
+    preflight_result = _run_mesh_preflight(args, args.input_usd, output_usd)
+    if preflight_result != 0:
+        return preflight_result
 
     recommendation_output = args.recommendation_output or _default_recommendation_output(args.input_usd, output_usd)
     os.makedirs(os.path.dirname(os.path.abspath(recommendation_output)), exist_ok=True)
@@ -274,6 +368,29 @@ def build_parser() -> argparse.ArgumentParser:
     process_parser.add_argument("--emit-report", action="store_true")
     process_parser.add_argument("--report-output")
     process_parser.add_argument("--max-prims", type=int, default=0)
+    process_parser.add_argument(
+        "--omni-asset-cli",
+        default=os.path.expanduser("~/omni-asset-cli/omni_asset_cli.py"),
+        help="Path to omni-asset-cli.py used for source mesh preflight validation",
+    )
+    process_parser.add_argument(
+        "--omni-asset-python",
+        help="Python executable for omni-asset-cli; defaults to its .venv/bin/python when present",
+    )
+    process_parser.add_argument(
+        "--mesh-preflight-output",
+        help="Path to the source mesh preflight JSON report",
+    )
+    process_parser.add_argument(
+        "--skip-mesh-preflight",
+        action="store_true",
+        help="Skip omni-asset-cli source mesh validation before recommendation and authoring",
+    )
+    process_parser.add_argument(
+        "--allow-mesh-defects",
+        action="store_true",
+        help="Continue processing even when mesh topology/manifold/normal defects are detected",
+    )
     _add_apply_flags(process_parser)
     process_parser.set_defaults(func=_cmd_process)
 

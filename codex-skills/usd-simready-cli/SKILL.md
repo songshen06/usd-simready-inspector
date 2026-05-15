@@ -5,7 +5,9 @@ description: Use when processing USD/USDZ/USDA/USDC assets with the usd-simready
 
 # USD SimReady CLI
 
-Use the repository's unified CLI first:
+Use the repository's unified CLI first. This skill owns SimReady preparation and
+authoring; the separate `omniverse-usd-asset-validator` skill owns validator,
+runtime, and flywheel checks.
 
 ```bash
 python3 usd_simready_cli.py process REF_JSON INPUT_USD \
@@ -28,26 +30,46 @@ Before running the workflow, verify these requirements:
 - The reference JSON, usually `simready_furniture_reference_with_wikidata.json`.
 - Read access to the input USD/USDZ/USDA/USDC and its sidecar assets.
 - Write access to the output directory so copied textures, `gltf/pbr.mdl`, recommendation JSON, and report JSON can be emitted.
-- Optional: Omniverse Asset Validator or `omni-asset-cli` if the user asks for downstream validation beyond the repository's local report.
+- `~/omni-asset-cli/omni_asset_cli.py` for source mesh preflight before `process`; use `--omni-asset-cli` when the checkout is elsewhere.
 - Downstream runtime validation must use Linux + Isaac Sim Docker through `omni-asset-cli physics-hit-test`; do not treat host Python or non-container runtimes as authoritative.
 - Current `usd_simready_cli.py apply/process` includes post-export bbox size validation by default. Use `--skip-size-validation` only when the user explicitly accepts bypassing scale/orientation validation.
 
 If `pxr` is missing, stop and tell the user the USD Python bindings are required; do not fabricate report results.
 
+## Skill Boundary
+
+Use this skill for:
+
+- SimReady recommendation generation.
+- Mesh-gated `process` runs that emit self-contained USD packages.
+- Scale/orientation correction, dependency packaging, static collision authoring, and post-export report checks.
+- Content Physics Agent supplement merging into recommendations.
+
+Call or hand off to the `omniverse-usd-asset-validator` skill for:
+
+- Standalone source mesh validation with `omni-asset-cli validate --profile stage1-furniture`.
+- Explaining validator rule failures such as manifold, topology, normals, missing references, or materials.
+- Isaac Sim Docker runtime checks with `omni-asset-cli physics-hit-test`.
+- End-to-end data-flywheel reports produced by `omni-asset-cli simready-flywheel`.
+
+Do not duplicate validator logic in this skill. Treat validator output as an
+upstream gate and as evidence for repair decisions.
+
 ## Main Workflow
 
 1. Confirm the input path exists and identify an output path. Prefer `.simready_static.usdc` for large assets and `.simready_static.usda` when the user needs a human-readable text layer.
-2. Run `usd_simready_cli.py process` with the reference JSON, input USD, output USD, and `--emit-report`. Add `--output-format usdc` when writing a compact binary `.usdc`.
-3. Read the emitted report and verify:
+2. Run `usd_simready_cli.py process` with the reference JSON, input USD, output USD, and `--emit-report`. Add `--output-format usdc` when writing a compact binary `.usdc`; the command runs the default source mesh preflight through `omni-asset-cli` before recommendation/apply.
+3. If preflight blocks on topology, manifold, zero-area face, normal, or weld defects, stop and ask for source mesh repair before collider/parameter authoring. Use `--allow-mesh-defects` only when the user explicitly accepts that risk.
+4. Read the emitted report and verify:
    - `issues` is empty or explain remaining issues.
    - `asset_dependencies.missing_relative_count == 0`.
    - All asset dependencies are relative when portability is required.
    - `stage.up_axis` is `Z` for downstream SimReady/Omniverse workflows unless the user requested otherwise.
    - `geometry.bbox.world.size` has plausible dimensions for the semantic class. For scaled assets, compare it to `recommendation.size_recommendation.reference_target_bbox` after orientation correction, not just to the source bbox.
    - Physics collision was authored on intended mesh targets.
-4. Report the output USD, recommendation JSON, report JSON, and the key validation facts.
-5. If the user asks for NVIDIA Content Agents Physics Agent, run `usd_simready_cli.py physics-agent INPUT_USD --dry-run` first. Only run the full command when a VLM API key and render backend are configured.
-6. When Physics Agent predictions are available, merge them back into the rule-based recommendation with `usd_simready_cli.py physics-supplement`. Treat this as supplemental review evidence; do not claim it automatically overrides `recommendation.authoring`.
+5. Report the output USD, mesh preflight JSON, recommendation JSON, report JSON, and the key validation facts.
+6. If the user asks for NVIDIA Content Agents Physics Agent, run `usd_simready_cli.py physics-agent INPUT_USD --dry-run` first. Only run the full command when a VLM API key and render backend are configured.
+7. When Physics Agent predictions are available, merge them back into the rule-based recommendation with `usd_simready_cli.py physics-supplement`. Treat this as supplemental review evidence; do not claim it automatically overrides `recommendation.authoring`.
 
 ## Useful Commands
 
@@ -91,6 +113,8 @@ python3 usd_simready_cli.py process REF_JSON INPUT_USD \
 
 The `process` command can:
 
+- Run source mesh preflight using `omni-asset-cli validate --profile stage1-furniture` before recommendation/apply.
+- Block collider and parameter authoring when mesh quality defects would make collision unreliable.
 - Generate a recommendation from the trusted reference library.
 - Copy resolvable texture and asset dependencies next to the output.
 - Bundle fallback `gltf/pbr.mdl` when source assets reference it but omit it.
