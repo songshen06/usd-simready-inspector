@@ -131,6 +131,23 @@ first, then rerun `process`. For explicit experiments only, use
 `--allow-mesh-defects`; to bypass the external preflight use
 `--skip-mesh-preflight`.
 
+For physics-only mitigation of mesh defects, explicitly opt into a proxy
+collider repair:
+
+```bash
+python3 usd_simready_cli.py process \
+  simready_furniture_reference_with_wikidata.json \
+  /path/to/new_asset.usd \
+  --output /path/to/new_asset.simready_static.usdc \
+  --mesh-defect-policy proxy-collider \
+  --emit-report
+```
+
+This keeps visual mesh topology unchanged, authors a proxy-purpose bbox
+collider on the final USD, disables previous authored colliders by default, and
+writes `<output>.mesh_repair.json` with the validate rules that triggered the
+repair. The default policy remains `block`.
+
 For large mesh-heavy assets, prefer binary USD crate output to avoid very large
 ASCII USDA files:
 
@@ -216,14 +233,16 @@ python3 apply_static_furniture_simready.py \
 
 The authoring step scans all authored USD asset-path fields, including MDL
 shader fields such as `info:mdl:sourceAsset`. Resolvable relative dependencies
-are copied next to the output USD with the same relative layout. If an upstream
-asset references `gltf/pbr.mdl` but omitted the file, the bundled fallback MDL
-is written to `gltf/pbr.mdl` in the output directory so downstream validators
-can resolve the shader source asset. Other missing relative dependencies still
-fail the command unless `--allow-missing-assets` is used. Exported USD files
-are normalized so copied assets, including textures and MDL shader sources, are
-authored as explicit relative paths such as `./textures/name.png` or
-`./gltf/pbr.mdl` instead of machine-local absolute paths. Use
+are copied next to the output USD with the same relative layout. Omniverse
+built-in glTF shader module paths such as `gltf/pbr.mdl` are preserved by
+default because rewriting them to a local fallback can degrade rendered PBR
+materials. Use `--bundle-omniverse-builtin-mdl` only when the target runtime
+does not provide the Omniverse built-in glTF MDL module and a simplified
+fallback is acceptable. Other missing relative dependencies still fail the
+command unless `--allow-missing-assets` is used. Exported USD files are
+normalized so copied assets, including textures, are authored as explicit
+relative paths such as `./textures/name.png` instead of machine-local absolute
+paths. Use
 `--output-format usdc` or a `.usdc` output path for compact binary USD crate
 output; keep `.usda` when a human-readable text layer is required for review.
 When the recommendation includes `authoring.apply_reference_scale=true`, the
@@ -250,6 +269,76 @@ upstream authoring step: inspect `summary.json`, `runtime_report.json`, and
 `timeline.csv`, then adjust collider generation, target mesh paths, bbox/scale
 normalization, template placement, or contact-report instrumentation before
 rerunning the same Docker command.
+
+### 5.1. Optional lightweight ovphysx runtime smoke test
+
+For faster local physics feedback, the unified CLI can author a small
+drop/contact scene and run it through `ovphysx` in a separate Python
+environment:
+
+```bash
+python3 usd_simready_cli.py ovphysx-smoke \
+  /path/to/new_asset.simready_static.usda \
+  --ovphysx-python /path/to/ovphysx-venv/bin/python \
+  --output new_asset.ovphysx_smoke.json
+```
+
+Use `--dry-run` to generate the temporary scene and planned command without
+requiring `ovphysx` to be installed:
+
+```bash
+python3 usd_simready_cli.py ovphysx-smoke \
+  /path/to/new_asset.simready_static.usda \
+  --dry-run
+```
+
+Use `--asset-collider-mode bbox-proxy` as a quick A/B check when an authored
+mesh collider fails but the runtime setup itself needs verification.
+
+This check is intentionally separate from the main project environment because
+current `ovphysx` builds require a specific OpenUSD runtime and should not be
+imported into the same process as the repository's `usd-core`-based inspector.
+Treat this as a fast local runtime gate; keep the Isaac Sim Docker check as the
+final downstream compatibility smoke test when available.
+
+Deployment details, separate virtualenv setup, expected report states, and
+troubleshooting are documented in `OVPHYSX_DEPLOYMENT.md`.
+
+### 5.2. Author a lightweight proxy collider
+
+When a high-poly authored mesh collider fails runtime contact checks, generate
+a bbox proxy collider and validate that instead:
+
+```bash
+python3 usd_simready_cli.py proxy-collider \
+  /path/to/new_asset.simready_static.usda \
+  --output /path/to/new_asset.simready_static.proxy_collider.usda \
+  --report /path/to/new_asset.simready_static.proxy_collider.report.json
+```
+
+The proxy command keeps the visual mesh, adds a proxy-purpose bbox collider,
+and disables the previous authored colliders by default. Details and the cup
+case study are documented in `PROXY_COLLIDER.md`.
+
+### 5.3. Repair mesh blockers with a physics proxy
+
+When `omni-asset-cli validate --profile stage1-furniture` reports mesh blocker
+rules, but the desired fix is limited to downstream collision reliability, use
+`mesh-repair` with the validate JSON:
+
+```bash
+python3 usd_simready_cli.py mesh-repair \
+  /path/to/new_asset.simready_static.usdc \
+  --preflight /path/to/new_asset.mesh_preflight.json \
+  --output /path/to/new_asset.simready_static.mesh_repaired.usdc \
+  --report /path/to/new_asset.mesh_repair.json
+```
+
+`mesh-repair` handles `ValidateTopologyChecker`, `ManifoldChecker`,
+`ZeroAreaFaceChecker`, `NormalsValidChecker`, and `WeldChecker` by generating a
+physics proxy collider. It does not weld, remesh, recalculate normals, or alter
+the visual mesh. If the preflight report has no mesh blocker rules, the command
+writes a no-op report unless `--force` is supplied.
 
 ### 6. Optional NVIDIA Content Agents Physics Agent
 
