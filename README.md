@@ -340,6 +340,23 @@ physics proxy collider. It does not weld, remesh, recalculate normals, or alter
 the visual mesh. If the preflight report has no mesh blocker rules, the command
 writes a no-op report unless `--force` is supplied.
 
+The repair principle is to separate render geometry from physics geometry:
+
+- The original visual mesh remains unchanged for rendering, material bindings,
+  UVs, subsets, and authored topology.
+- A new proxy collider is authored from the asset default prim's bounding box,
+  marked with `purpose = "proxy"` and `simready:proxyCollider = true`.
+- `PhysicsCollisionAPI` is enabled on the proxy, and previous authored
+  colliders are disabled by default so PhysX uses the stable proxy collider.
+- The repair report records the triggering validate rules and sets
+  `visual_mesh_modified = false`.
+
+This is a conservative physics-only mitigation for downstream contact tests.
+It avoids the risk of changing source mesh topology, but the bbox proxy is only
+an outer approximation. Assets that need shape-accurate interaction should
+later use a more detailed collider strategy, such as multiple primitive proxies,
+convex hulls, or a cleaned collider-only mesh.
+
 ### 6. Optional NVIDIA Content Agents Physics Agent
 
 This repository can hand an authored USD to NVIDIA Content Agents Physics Agent
