@@ -70,11 +70,7 @@
       </section>
       <section class="span-5">
         <h2>检测与验证</h2>
-        <ul>
-          <li>omni-asset-cli: 未通过; issue_count=5; severity={&#x27;FAILURE&#x27;: 3, &#x27;WARNING&#x27;: 2}</li>
-          <li>runtime: 通过; frames=240</li>
-          <li>asset_loaded: True</li><li>static_colliders_applied: True</li><li>dynamic_box_created: True</li><li>simulation_advanced: True</li><li>hit_targeted: True</li><li>size_preserved: True</li><li>contact_detected_or_inferred: False</li><li>artifacts_written: True</li>
-        </ul>
+        <ul><li>omni-asset-cli 的 Stage 1 静态校验没有完全通过，主要发现 3 个材质路径规范项，几何质量提醒（ManifoldChecker=1，WeldChecker=1）。这些问题不会否定本轮自动化写入的价值，但应该进入下一轮数据飞轮修正。</li><li>运行时验证完成了 240 帧仿真：资产成功加载，静态碰撞体被应用，动态测试物体创建成功，仿真正常推进，并且资产尺寸在模板场景中保持稳定。</li><li>本轮运行时报告尚未从当前启发式里确认真实接触，因此结论应表述为“流程可运行并产出证据”，接触可靠性需要在下一轮使用更强的 PhysX contact report 或调试可视化继续确认。</li></ul>
       </section>
       <section class="span-12">
         <h2>检测视频证据</h2>
@@ -93,7 +89,7 @@
         </table>
       </section>
     </div>
-    <div class="foot">生成时间: 2026-07-02 09:34 UTC</div>
+    <div class="foot">生成时间: 2026-07-02 09:38 UTC</div>
   </main>
 </body>
 </html>

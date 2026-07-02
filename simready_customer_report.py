@@ -318,6 +318,105 @@ def _issue_rows(payload: Dict[str, Any]) -> str:
     return "".join(rows)
 
 
+def _validation_items(inputs: ReportInputs, lang: str) -> List[str]:
+    omni = inputs.omni_validate
+    runtime = inputs.runtime_summary or inputs.runtime_report
+    issue_count = int(_dig(omni, "summary", "issue_count", default=0) or 0)
+    severity_counts = _dig(omni, "summary", "severity_counts", default={}) or {}
+    rule_counts = _dig(omni, "summary", "rule_counts", default={}) or {}
+    checks = runtime.get("checks") or {}
+    frames = runtime.get("frames") or _dig(inputs.runtime_report, "frames", default="n/a")
+    runtime_passed = _status_key(runtime.get("result"), runtime.get("status")) == "passed"
+    contact = checks.get("contact_detected_or_inferred")
+
+    if lang == "zh":
+        items: List[str] = []
+        if issue_count:
+            material = rule_counts.get("MaterialPathChecker", 0)
+            geometry_rules = [
+                f"{rule}={count}"
+                for rule, count in rule_counts.items()
+                if rule != "MaterialPathChecker"
+            ]
+            detail = []
+            if material:
+                detail.append(f"{material} 个材质路径规范项")
+            if geometry_rules:
+                detail.append("几何质量提醒（" + "，".join(geometry_rules) + "）")
+            detail_text = "，".join(detail) if detail else f"{issue_count} 个校验项"
+            items.append(
+                "omni-asset-cli 的 Stage 1 静态校验没有完全通过，主要发现"
+                f" {detail_text}。这些问题不会否定本轮自动化写入的价值，但应该进入下一轮数据飞轮修正。"
+            )
+        elif omni:
+            items.append("omni-asset-cli 的 Stage 1 静态校验未发现阻塞问题，资产结构满足当前规则集。")
+
+        if runtime_passed:
+            items.append(
+                f"运行时验证完成了 {frames} 帧仿真：资产成功加载，静态碰撞体被应用，动态测试物体创建成功，"
+                "仿真正常推进，并且资产尺寸在模板场景中保持稳定。"
+            )
+        elif runtime:
+            items.append(
+                "运行时验证未完全通过，说明当前资产或测试模板还需要继续调整；相关 artifacts 已保留用于定位问题。"
+            )
+
+        if contact is False:
+            items.append(
+                "本轮运行时报告尚未从当前启发式里确认真实接触，因此结论应表述为“流程可运行并产出证据”，"
+                "接触可靠性需要在下一轮使用更强的 PhysX contact report 或调试可视化继续确认。"
+            )
+        elif contact is True:
+            items.append("runtime 证据显示测试物体与资产发生了接触或可推断接触，说明 authored collider 已参与物理测试。")
+
+        if not items:
+            items.append("当前报告未提供完整的下游验证结果；建议补充 omni-asset-cli validate 和 runtime evidence 后再对外展示。")
+        return items
+
+    items = []
+    if issue_count:
+        material = rule_counts.get("MaterialPathChecker", 0)
+        geometry_rules = [
+            f"{rule}={count}"
+            for rule, count in rule_counts.items()
+            if rule != "MaterialPathChecker"
+        ]
+        detail = []
+        if material:
+            detail.append(f"{material} material-path conformance findings")
+        if geometry_rules:
+            detail.append("geometry-quality findings (" + ", ".join(geometry_rules) + ")")
+        detail_text = ", ".join(detail) if detail else f"{issue_count} validation findings"
+        items.append(
+            "The omni-asset-cli Stage 1 static validation did not fully pass. It mainly found "
+            f"{detail_text}. These findings do not negate the automated authoring result, but they should feed the next data-flywheel iteration."
+        )
+    elif omni:
+        items.append("The omni-asset-cli Stage 1 static validation found no blocking issues in the current rule set.")
+
+    if runtime_passed:
+        items.append(
+            f"The runtime validation completed {frames} simulation frames: the asset loaded, static colliders were applied, "
+            "the dynamic test object was created, simulation advanced, and the authored asset kept its size in the template scene."
+        )
+    elif runtime:
+        items.append(
+            "The runtime validation did not fully pass, so the asset or test harness still needs adjustment. The generated artifacts are retained for debugging."
+        )
+
+    if contact is False:
+        items.append(
+            "This runtime report did not confirm physical contact with the current heuristic, so the customer-facing conclusion should be that "
+            "the workflow runs and produces evidence; contact reliability should be confirmed in the next iteration with stronger PhysX contact reporting or debug visualization."
+        )
+    elif contact is True:
+        items.append("Runtime evidence shows detected or inferred contact, which means the authored collider participated in the physics test.")
+
+    if not items:
+        items.append("This report does not yet include complete downstream validation evidence; add omni-asset-cli validation and runtime artifacts before customer review.")
+    return items
+
+
 def render_html(inputs: ReportInputs, lang: str, output_path: str) -> str:
     labels = LANG[lang]
     report = inputs.inspection_report
@@ -331,12 +430,9 @@ def render_html(inputs: ReportInputs, lang: str, output_path: str) -> str:
     video_markup, video_note = _video_html(inputs, labels, output_path)
     workflow = _as_list(_workflow_items(inputs, lang))
     flywheel = _as_list(_flywheel_items(lang))
+    validation = _as_list(_validation_items(inputs, lang))
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     status_text = labels.get(final_status, labels["unknown"])
-    issue_count = _dig(omni, "summary", "issue_count", default=0)
-    severity_counts = _dig(omni, "summary", "severity_counts", default={}) or {}
-    runtime_checks = runtime.get("checks") or {}
-    check_list = _as_list(f"{key}: {value}" for key, value in runtime_checks.items())
 
     return f"""<!doctype html>
 <html lang="{lang}">
@@ -410,11 +506,7 @@ def render_html(inputs: ReportInputs, lang: str, output_path: str) -> str:
       </section>
       <section class="span-5">
         <h2>{_escape(labels['validation'])}</h2>
-        <ul>
-          <li>omni-asset-cli: {labels.get(_status_key(omni.get('validation_status'), omni.get('status')), labels['unknown'])}; issue_count={_escape(issue_count)}; severity={_escape(severity_counts)}</li>
-          <li>runtime: {labels.get(_status_key(runtime.get('result'), runtime.get('status')), labels['unknown'])}; frames={_escape(runtime.get('frames') or _dig(inputs.runtime_report, 'frames', default='n/a'))}</li>
-          {check_list}
-        </ul>
+        <ul>{validation}</ul>
       </section>
       <section class="span-12">
         <h2>{_escape(labels['evidence'])}</h2>

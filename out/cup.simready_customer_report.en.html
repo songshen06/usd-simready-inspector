@@ -70,11 +70,7 @@
       </section>
       <section class="span-5">
         <h2>Tests And Validation</h2>
-        <ul>
-          <li>omni-asset-cli: Failed; issue_count=5; severity={&#x27;FAILURE&#x27;: 3, &#x27;WARNING&#x27;: 2}</li>
-          <li>runtime: Passed; frames=240</li>
-          <li>asset_loaded: True</li><li>static_colliders_applied: True</li><li>dynamic_box_created: True</li><li>simulation_advanced: True</li><li>hit_targeted: True</li><li>size_preserved: True</li><li>contact_detected_or_inferred: False</li><li>artifacts_written: True</li>
-        </ul>
+        <ul><li>The omni-asset-cli Stage 1 static validation did not fully pass. It mainly found 3 material-path conformance findings, geometry-quality findings (ManifoldChecker=1, WeldChecker=1). These findings do not negate the automated authoring result, but they should feed the next data-flywheel iteration.</li><li>The runtime validation completed 240 simulation frames: the asset loaded, static colliders were applied, the dynamic test object was created, simulation advanced, and the authored asset kept its size in the template scene.</li><li>This runtime report did not confirm physical contact with the current heuristic, so the customer-facing conclusion should be that the workflow runs and produces evidence; contact reliability should be confirmed in the next iteration with stronger PhysX contact reporting or debug visualization.</li></ul>
       </section>
       <section class="span-12">
         <h2>Validation Video Evidence</h2>
@@ -93,7 +89,7 @@
         </table>
       </section>
     </div>
-    <div class="foot">Generated: 2026-07-02 09:34 UTC</div>
+    <div class="foot">Generated: 2026-07-02 09:38 UTC</div>
   </main>
 </body>
 </html>
