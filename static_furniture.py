@@ -939,13 +939,16 @@ def recommend_from_reference(
     furniture_class = str(query.get("furniture_class") or "")
     is_decor = furniture_class == "decor"
 
+    stage1_supported = bool(_stage1_is_furniture(furniture_class, bool(query.get("is_furniture"))) or is_decor)
+    apply_reference_scale = bool(size_recommendation.get("status") == "scale" and stage1_supported and not review_required)
+
     recommendation = {
         "asset": query,
         "recommendation": {
             "is_furniture": _stage1_is_furniture(furniture_class, bool(query.get("is_furniture"))),
             "furniture_class": furniture_class,
             "is_decor": is_decor,
-            "stage1_supported": bool(_stage1_is_furniture(furniture_class, bool(query.get("is_furniture"))) or is_decor),
+            "stage1_supported": stage1_supported,
             "review_required": review_required,
             "review_reasons": review_reasons,
             "size": query.get("size", {}) or {},
@@ -968,7 +971,7 @@ def recommend_from_reference(
                 "source_usd_for_authoring": authoring_source_file,
                 "target_mesh_paths": authoring_mesh_paths,
                 "auto_apply_safe": collision_plan["auto_apply_safe"],
-                "apply_reference_scale": size_recommendation.get("status") == "scale",
+                "apply_reference_scale": apply_reference_scale,
                 "suggested_uniform_scale": size_recommendation.get("suggested_uniform_scale"),
                 "reference_target_bbox": size_recommendation.get("reference_target_bbox"),
                 "apply_orientation_correction": bool(orientation_recommendation.get("apply")),

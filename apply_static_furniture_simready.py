@@ -7,7 +7,7 @@ import argparse
 import os
 import re
 import shutil
-from typing import List, Optional, Sequence
+from typing import Any, List, Optional, Sequence
 
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
 
@@ -16,7 +16,10 @@ from usd_inspector import inspect_asset_dependencies, open_stage
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BUNDLED_RELATIVE_ASSETS = {
+OMNIVERSE_BUILTIN_RELATIVE_ASSETS = {
+    "gltf/pbr.mdl",
+}
+FALLBACK_BUNDLED_RELATIVE_ASSETS = {
     "gltf/pbr.mdl": os.path.join(SCRIPT_DIR, "gltf", "pbr.mdl"),
 }
 EXPORT_FORMATS = {"auto", "usda", "usdc"}
@@ -357,6 +360,53 @@ def _asset_target_relative_path(asset_path: str, source_path: str) -> str:
     return _validator_relative_asset_path(basename)
 
 
+def _asset_path_string(value: Any) -> str:
+    if isinstance(value, Sdf.AssetPath):
+        return value.path or value.resolvedPath or ""
+    if isinstance(value, str):
+        return value
+    return ""
+
+
+def _asset_path_matches_dependency(
+    current_path: str,
+    asset_path: str,
+    source_path: str,
+    relative_path: str,
+) -> bool:
+    if not current_path:
+        return False
+    current_key = _normalize_asset_key(current_path)
+    asset_key = _normalize_asset_key(asset_path)
+    relative_key = _normalize_asset_key(relative_path)
+    if current_path in {asset_path, relative_path}:
+        return True
+    if current_key in {asset_key, relative_key}:
+        return True
+    if not source_path or "://" in current_path or "://" in source_path:
+        return False
+    try:
+        return os.path.abspath(current_path) == os.path.abspath(source_path)
+    except (TypeError, ValueError):
+        return False
+
+
+def _rewrite_asset_attr_to_relative(
+    attr: Any,
+    asset_path: str,
+    source_path: str,
+    relative_path: str,
+) -> bool:
+    current_value = attr.Get()
+    current_path = _asset_path_string(current_value)
+    if not _asset_path_matches_dependency(current_path, asset_path, source_path, relative_path):
+        return False
+    if current_path == relative_path:
+        return False
+    attr.Set(Sdf.AssetPath(relative_path))
+    return True
+
+
 def _copy_asset_dependencies(asset_dependencies: dict, output_path: str) -> List[str]:
     output_dir = os.path.dirname(os.path.abspath(output_path))
     copied_paths: List[str] = []
@@ -398,7 +448,7 @@ def _copy_bundled_asset_dependencies(asset_dependencies: dict, output_path: str)
         if not asset_path:
             continue
         asset_key = _normalize_asset_key(asset_path)
-        bundled_source = BUNDLED_RELATIVE_ASSETS.get(asset_key)
+        bundled_source = FALLBACK_BUNDLED_RELATIVE_ASSETS.get(asset_key)
         if not bundled_source or not os.path.exists(bundled_source):
             continue
         target_path = os.path.abspath(os.path.normpath(os.path.join(output_dir, asset_path)))
@@ -411,17 +461,49 @@ def _copy_bundled_asset_dependencies(asset_dependencies: dict, output_path: str)
     return copied_paths
 
 
-def _remaining_missing_assets(asset_dependencies: dict) -> List[dict]:
+def _remaining_missing_assets(asset_dependencies: dict, preserve_builtin_render_assets: bool) -> List[dict]:
     remaining = []
     for item in asset_dependencies.get("missing_relative", []) or []:
         asset_path = item.get("asset_path")
-        if asset_path and _normalize_asset_key(asset_path) in BUNDLED_RELATIVE_ASSETS:
+        if not asset_path:
+            remaining.append(item)
+            continue
+        asset_key = _normalize_asset_key(asset_path)
+        if preserve_builtin_render_assets and asset_key in OMNIVERSE_BUILTIN_RELATIVE_ASSETS:
+            continue
+        if asset_key in FALLBACK_BUNDLED_RELATIVE_ASSETS:
             continue
         remaining.append(item)
     return remaining
 
 
-def _rewrite_asset_paths_to_relative(stage, asset_dependencies: dict) -> int:
+def _repair_missing_environment_light_textures(stage, asset_dependencies: dict) -> List[dict]:
+    repairs: List[dict] = []
+    for item in asset_dependencies.get("missing_relative", []) or []:
+        prim_path = item.get("prim")
+        attr_name = item.get("attribute")
+        asset_path = item.get("asset_path")
+        if attr_name not in {"inputs:texture:file", "texture:file"}:
+            continue
+        prim = stage.GetPrimAtPath(prim_path)
+        if not prim or not prim.IsValid() or prim.GetTypeName() != "DomeLight":
+            continue
+        attr = prim.GetAttribute(attr_name)
+        if not attr or not attr.IsValid() or not attr.HasAuthoredValue():
+            continue
+        attr.Clear()
+        repairs.append(
+            {
+                "prim": str(prim_path),
+                "attribute": str(attr_name),
+                "asset_path": str(asset_path),
+                "action": "cleared_missing_dome_light_texture",
+            }
+        )
+    return repairs
+
+
+def _rewrite_asset_paths_to_relative(stage, asset_dependencies: dict, preserve_builtin_render_assets: bool) -> int:
     rewrites = 0
     for item in asset_dependencies.get("all", []) or []:
         prim_path = item.get("prim")
@@ -433,13 +515,15 @@ def _rewrite_asset_paths_to_relative(stage, asset_dependencies: dict) -> int:
             continue
         if "://" in asset_path:
             continue
+        if preserve_builtin_render_assets and asset_key in OMNIVERSE_BUILTIN_RELATIVE_ASSETS:
+            continue
         if os.path.exists(source_path):
             relative_path = _asset_target_relative_path(asset_path, source_path)
-        elif item.get("is_relative") and asset_key in BUNDLED_RELATIVE_ASSETS:
+        elif item.get("is_relative") and asset_key in FALLBACK_BUNDLED_RELATIVE_ASSETS:
+            relative_path = _validator_relative_asset_path(asset_key)
+        elif item.get("is_relative"):
             relative_path = _validator_relative_asset_path(asset_key)
         else:
-            continue
-        if asset_path == relative_path:
             continue
         prim = stage.GetPrimAtPath(prim_path)
         if not prim or not prim.IsValid():
@@ -447,12 +531,12 @@ def _rewrite_asset_paths_to_relative(stage, asset_dependencies: dict) -> int:
         attr = prim.GetAttribute(attr_name)
         if not attr or not attr.IsValid():
             continue
-        attr.Set(Sdf.AssetPath(relative_path))
-        rewrites += 1
+        if _rewrite_asset_attr_to_relative(attr, asset_path, source_path, relative_path):
+            rewrites += 1
     return rewrites
 
 
-def _asset_path_rewrite_map(asset_dependencies: dict) -> dict:
+def _asset_path_rewrite_map(asset_dependencies: dict, preserve_builtin_render_assets: bool) -> dict:
     replacements = {}
     for item in asset_dependencies.get("all", []) or []:
         asset_path = item.get("asset_path")
@@ -460,9 +544,13 @@ def _asset_path_rewrite_map(asset_dependencies: dict) -> dict:
         source_path = item.get("resolved_path") if item.get("is_relative") else asset_path
         if not asset_path or not source_path or "://" in asset_path:
             continue
+        if preserve_builtin_render_assets and asset_key in OMNIVERSE_BUILTIN_RELATIVE_ASSETS:
+            continue
         if os.path.exists(source_path):
             relative_path = _asset_target_relative_path(asset_path, source_path)
-        elif item.get("is_relative") and asset_key in BUNDLED_RELATIVE_ASSETS:
+        elif item.get("is_relative") and asset_key in FALLBACK_BUNDLED_RELATIVE_ASSETS:
+            relative_path = _validator_relative_asset_path(asset_key)
+        elif item.get("is_relative"):
             relative_path = _validator_relative_asset_path(asset_key)
         else:
             continue
@@ -500,22 +588,22 @@ def _export_stage(stage, output_path: str, output_format: str) -> str | None:
     return None
 
 
-def _rewrite_exported_stage_asset_paths(output_path: str, asset_dependencies: dict) -> int:
+def _rewrite_exported_stage_asset_paths(output_path: str, asset_dependencies: dict, preserve_builtin_render_assets: bool) -> int:
     stage = open_stage(output_path)
-    rewrite_count = _rewrite_asset_paths_to_relative(stage, asset_dependencies)
+    rewrite_count = _rewrite_asset_paths_to_relative(stage, asset_dependencies, preserve_builtin_render_assets)
     if rewrite_count:
         stage.GetRootLayer().Save()
     return rewrite_count
 
 
-def _rewrite_exported_usda_asset_paths(output_path: str, asset_dependencies: dict) -> int:
+def _rewrite_exported_usda_asset_paths(output_path: str, asset_dependencies: dict, preserve_builtin_render_assets: bool) -> int:
     try:
         with open(output_path, "r", encoding="utf-8") as handle:
             text = handle.read()
     except UnicodeDecodeError:
         return 0
 
-    replacements = _asset_path_rewrite_map(asset_dependencies)
+    replacements = _asset_path_rewrite_map(asset_dependencies, preserve_builtin_render_assets)
     rewrite_count = 0
 
     def replace_asset(match):
@@ -559,6 +647,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--no-copy-relative-assets",
         action="store_true",
         help="Do not copy resolvable relative asset dependencies next to the output USD",
+    )
+    parser.add_argument(
+        "--bundle-omniverse-builtin-mdl",
+        action="store_true",
+        help=(
+            "Bundle fallback MDL files for Omniverse built-in modules such as gltf/pbr.mdl. "
+            "By default these paths are preserved so Omniverse/Isaac Sim can use its native glTF PBR shader."
+        ),
     )
     parser.add_argument(
         "--no-apply-reference-scale",
@@ -613,10 +709,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     stage = open_stage(source_usd_for_authoring)
     asset_dependencies = inspect_asset_dependencies(stage, source_usd_for_authoring)
+    preserve_builtin_render_assets = not args.bundle_omniverse_builtin_mdl
+    repaired_missing_assets = _repair_missing_environment_light_textures(stage, asset_dependencies)
+    if repaired_missing_assets:
+        asset_dependencies = inspect_asset_dependencies(stage, source_usd_for_authoring)
     bundled_paths: List[str] = []
-    if not args.no_copy_relative_assets:
+    if not args.no_copy_relative_assets and args.bundle_omniverse_builtin_mdl:
         bundled_paths = _copy_bundled_asset_dependencies(asset_dependencies, output_path)
-    missing_assets = _remaining_missing_assets(asset_dependencies)
+    missing_assets = _remaining_missing_assets(asset_dependencies, preserve_builtin_render_assets)
     if missing_assets and not args.allow_missing_assets:
         print("error: source USD has missing relative asset dependencies:")
         for item in missing_assets:
@@ -655,7 +755,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     rewritten_count = 0
     if not args.no_copy_relative_assets:
-        rewritten_count = _rewrite_asset_paths_to_relative(stage, asset_dependencies)
+        rewritten_count = _rewrite_asset_paths_to_relative(stage, asset_dependencies, preserve_builtin_render_assets)
     try:
         export_format = _export_stage(stage, output_path, args.output_format)
     except ValueError as error:
@@ -664,9 +764,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     file_rewritten_count = 0
     if not args.no_copy_relative_assets:
         if export_format == "usdc":
-            file_rewritten_count = _rewrite_exported_stage_asset_paths(output_path, asset_dependencies)
+            file_rewritten_count = _rewrite_exported_stage_asset_paths(
+                output_path,
+                asset_dependencies,
+                preserve_builtin_render_assets,
+            )
         else:
-            file_rewritten_count = _rewrite_exported_usda_asset_paths(output_path, asset_dependencies)
+            file_rewritten_count = _rewrite_exported_usda_asset_paths(
+                output_path,
+                asset_dependencies,
+                preserve_builtin_render_assets,
+            )
     copied_paths: List[str] = []
     if not args.no_copy_relative_assets:
         copied_paths = _copy_asset_dependencies(asset_dependencies, output_path)
@@ -689,6 +797,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"copied {len(bundled_paths)} bundled asset dependencies")
     if copied_paths:
         print(f"copied {len(copied_paths)} relative asset dependencies")
+    if repaired_missing_assets:
+        print(f"auto-repaired {len(repaired_missing_assets)} missing environment light dependencies")
     if applied_reference_scale is not None:
         print(f"applied reference uniform scale {applied_reference_scale}")
     if applied_orientation:

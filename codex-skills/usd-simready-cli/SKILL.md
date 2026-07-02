@@ -29,7 +29,7 @@ Before running the workflow, verify these requirements:
 - Python 3 in an environment where `from pxr import Usd` works.
 - The reference JSON, usually `simready_furniture_reference_with_wikidata.json`.
 - Read access to the input USD/USDZ/USDA/USDC and its sidecar assets.
-- Write access to the output directory so copied textures, `gltf/pbr.mdl`, recommendation JSON, and report JSON can be emitted.
+- Write access to the output directory so copied textures, recommendation JSON, and report JSON can be emitted.
 - `~/omni-asset-cli/omni_asset_cli.py` for source mesh preflight before `process`; use `--omni-asset-cli` when the checkout is elsewhere.
 - Downstream runtime validation must use Linux + Isaac Sim Docker through `omni-asset-cli physics-hit-test`; do not treat host Python or non-container runtimes as authoritative.
 - Current `usd_simready_cli.py apply/process` includes post-export bbox size validation by default. Use `--skip-size-validation` only when the user explicitly accepts bypassing scale/orientation validation.
@@ -117,8 +117,8 @@ The `process` command can:
 - Block collider and parameter authoring when mesh quality defects would make collision unreliable.
 - Generate a recommendation from the trusted reference library.
 - Copy resolvable texture and asset dependencies next to the output.
-- Bundle fallback `gltf/pbr.mdl` when source assets reference it but omit it.
-- Rewrite exported USD asset paths to explicit relative paths such as `./textures/name.png` and `./gltf/pbr.mdl`.
+- Preserve Omniverse built-in glTF MDL paths such as `gltf/pbr.mdl` by default so rendered PBR materials keep the native Omniverse/Isaac Sim shader behavior.
+- Rewrite copied asset paths to explicit relative paths such as `./textures/name.png`.
 - Apply `authoring.suggested_uniform_scale` when `apply_reference_scale=true`.
 - Apply orientation correction when `apply_orientation_correction=true`, including Y-up to Z-up conversion and lying-down geometry fixes.
 - Validate the exported default prim bbox against the recommendation's scale/orientation expectations. A mismatch fails the command unless `--skip-size-validation` is provided.

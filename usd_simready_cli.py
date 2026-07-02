@@ -10,14 +10,26 @@ import subprocess
 import sys
 from typing import Any, Dict, List, Optional
 
-from apply_static_furniture_simready import build_simready_expectations, main as apply_static_main
-from author_proxy_collider import author_bbox_proxy_collider, main as proxy_collider_main
-from content_physics_agent import main as content_physics_main
-from content_physics_supplement import main as physics_supplement_main
-from ovphysx_runtime_check import main as ovphysx_runtime_main
-from simready_diagnosis import diagnose_simready, format_diagnosis_summary
-from static_furniture import inspect_asset, load_json, recommend_from_reference, save_json
-from usd_inspector import build_detailed_report, open_stage
+from simready_customer_report import generate_reports
+
+try:
+    from apply_static_furniture_simready import build_simready_expectations, main as apply_static_main
+    from author_proxy_collider import author_bbox_proxy_collider, main as proxy_collider_main
+    from content_physics_agent import main as content_physics_main
+    from content_physics_supplement import main as physics_supplement_main
+    from ovphysx_runtime_check import main as ovphysx_runtime_main
+    from simready_diagnosis import diagnose_simready, format_diagnosis_summary
+    from static_furniture import inspect_asset, load_json, recommend_from_reference, save_json
+    from usd_inspector import build_detailed_report, open_stage
+    _USD_RUNTIME_IMPORT_ERROR = None
+except ModuleNotFoundError as error:
+    build_simready_expectations = apply_static_main = None
+    author_bbox_proxy_collider = proxy_collider_main = None
+    content_physics_main = physics_supplement_main = ovphysx_runtime_main = None
+    diagnose_simready = format_diagnosis_summary = None
+    inspect_asset = load_json = recommend_from_reference = save_json = None
+    build_detailed_report = open_stage = None
+    _USD_RUNTIME_IMPORT_ERROR = error
 
 
 MESH_BLOCKING_RULES = {
@@ -37,6 +49,17 @@ CONTENT_LABEL_TARGET_BBOX_CM = {
     "soccer_ball": [22.0, 22.0, 22.0],
     "football": [22.0, 22.0, 22.0],
 }
+
+
+def _require_usd_runtime() -> bool:
+    if _USD_RUNTIME_IMPORT_ERROR is None:
+        return True
+    print(
+        "error: this command requires the USD runtime dependencies that failed to import: "
+        f"{_USD_RUNTIME_IMPORT_ERROR}",
+        file=sys.stderr,
+    )
+    return False
 
 
 def _replace_usd_suffix(path: str, suffix: str) -> str:
@@ -370,6 +393,8 @@ def _write_recommendation(
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
+    if not _require_usd_runtime():
+        return 2
     output = _write_inspection_report(args.input_usd, args.output, args.pretty, args.max_prims)
     if output:
         print(output)
@@ -377,6 +402,8 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
 
 
 def _cmd_recommend(args: argparse.Namespace) -> int:
+    if not _require_usd_runtime():
+        return 2
     output = args.output or _default_recommendation_output(args.input_usd)
     try:
         target_bbox_cm = _parse_bbox_cm(args.target_bbox_cm)
@@ -415,10 +442,14 @@ def _apply_args(args: argparse.Namespace, input_usd: str, recommendation_json: s
 
 
 def _cmd_apply(args: argparse.Namespace) -> int:
+    if not _require_usd_runtime():
+        return 2
     return apply_static_main(_apply_args(args, args.input_usd, args.recommendation_json, args.output))
 
 
 def _cmd_process(args: argparse.Namespace) -> int:
+    if not _require_usd_runtime():
+        return 2
     output_usd = args.output or _default_process_output(args.input_usd, args.output_dir, args.output_format)
     os.makedirs(os.path.dirname(os.path.abspath(output_usd)), exist_ok=True)
 
@@ -483,6 +514,8 @@ def _cmd_process(args: argparse.Namespace) -> int:
 
 
 def _cmd_mesh_repair(args: argparse.Namespace) -> int:
+    if not _require_usd_runtime():
+        return 2
     input_usd = os.path.abspath(args.input_usd)
     output_usd = os.path.abspath(args.output or _replace_usd_suffix(input_usd, ".mesh_repaired.usda"))
     report_output = os.path.abspath(args.report or _default_mesh_repair_report_output(output_usd))
@@ -519,6 +552,8 @@ def _cmd_mesh_repair(args: argparse.Namespace) -> int:
 
 
 def _cmd_physics_agent(args: argparse.Namespace) -> int:
+    if not _require_usd_runtime():
+        return 2
     agent_args = [args.input_usd]
     agent_args.extend(["--output-dir", args.output_dir])
     agent_args.extend(["--content-agents-root", args.content_agents_root])
@@ -545,6 +580,8 @@ def _cmd_physics_agent(args: argparse.Namespace) -> int:
 
 
 def _cmd_physics_supplement(args: argparse.Namespace) -> int:
+    if not _require_usd_runtime():
+        return 2
     supplement_args = [args.recommendation_json, "--physics-predictions", args.physics_predictions]
     if args.source_usd:
         supplement_args.extend(["--source-usd", args.source_usd])
@@ -556,6 +593,8 @@ def _cmd_physics_supplement(args: argparse.Namespace) -> int:
 
 
 def _cmd_diagnose(args: argparse.Namespace) -> int:
+    if not _require_usd_runtime():
+        return 2
     recommendation = load_json(args.recommendation)
     report = load_json(args.report)
     runtime_report = load_json(args.runtime_report) if args.runtime_report else None
@@ -567,7 +606,15 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
     return 0 if result.get("status") in {"passed", "warning"} else 1
 
 
+def _cmd_customer_report(args: argparse.Namespace) -> int:
+    for path in generate_reports(args):
+        print(path)
+    return 0
+
+
 def _cmd_ovphysx_smoke(args: argparse.Namespace) -> int:
+    if not _require_usd_runtime():
+        return 2
     smoke_args = [args.input_usd]
     if args.output:
         smoke_args.extend(["--output", args.output])
@@ -590,6 +637,8 @@ def _cmd_ovphysx_smoke(args: argparse.Namespace) -> int:
 
 
 def _cmd_proxy_collider(args: argparse.Namespace) -> int:
+    if not _require_usd_runtime():
+        return 2
     proxy_args = [args.input_usd]
     if args.output:
         proxy_args.extend(["--output", args.output])
@@ -862,6 +911,35 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose_parser.add_argument("--runtime-report")
     diagnose_parser.add_argument("--output")
     diagnose_parser.set_defaults(func=_cmd_diagnose)
+
+    customer_report_parser = subparsers.add_parser(
+        "customer-report",
+        help="Generate bilingual customer-facing HTML reports for the SimReady workflow",
+    )
+    customer_report_parser.add_argument("--asset-name")
+    customer_report_parser.add_argument("--source-usd")
+    customer_report_parser.add_argument("--output-usd")
+    customer_report_parser.add_argument("--recommendation", required=True)
+    customer_report_parser.add_argument("--report", required=True, help="usd-simready-inspector inspection report JSON")
+    customer_report_parser.add_argument("--omni-validate", help="omni-asset-cli validate JSON")
+    customer_report_parser.add_argument("--runtime-summary", help="Downstream runtime summary.json")
+    customer_report_parser.add_argument("--runtime-report", help="Downstream runtime_report.json")
+    customer_report_parser.add_argument("--proxy-report", help="Optional proxy collider / mesh repair report JSON")
+    customer_report_parser.add_argument("--video", help="Validation video path, usually compressed mp4")
+    customer_report_parser.add_argument("--compressed-video", help="Pre-compressed validation video path")
+    customer_report_parser.add_argument(
+        "--compress-video",
+        action="store_true",
+        help="Compress --video with ffmpeg before embedding/linking",
+    )
+    customer_report_parser.add_argument("--video-max-width", type=int, default=960)
+    customer_report_parser.add_argument("--video-crf", type=int, default=32)
+    customer_report_parser.add_argument("--max-embed-mb", type=float, default=8.0)
+    customer_report_parser.add_argument("--no-embed-video", action="store_true")
+    customer_report_parser.add_argument("--output-base", help="Base output path when --output-zh/--output-en are omitted")
+    customer_report_parser.add_argument("--output-zh")
+    customer_report_parser.add_argument("--output-en")
+    customer_report_parser.set_defaults(func=_cmd_customer_report)
 
     return parser
 

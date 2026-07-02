@@ -20,10 +20,28 @@ def _is_number_list(value: Any, length: int = 3) -> bool:
     return isinstance(value, list) and len(value) == length and all(_safe_float(item) is not None for item in value)
 
 
-def _float_list(value: Any) -> Optional[List[float]]:
-    if not _is_number_list(value):
+def _float_list(value: Any, length: int = 3) -> Optional[List[float]]:
+    if not _is_number_list(value, length=length):
         return None
     return [float(item) for item in value]
+
+
+def _stage_units_to_cm(values: Optional[List[float]], meters_per_unit: Any) -> Optional[List[float]]:
+    if values is None:
+        return None
+    mpu = _safe_float(meters_per_unit)
+    if mpu is None:
+        return values
+    return [value * mpu * 100.0 for value in values]
+
+
+def _stage_unit_to_cm(value: Optional[float], meters_per_unit: Any) -> Optional[float]:
+    if value is None:
+        return None
+    mpu = _safe_float(meters_per_unit)
+    if mpu is None:
+        return value
+    return value * mpu * 100.0
 
 
 def _status_from_checks(checks: List[Dict[str, Any]]) -> str:
@@ -136,15 +154,55 @@ def _expectations_from(recommendation: Dict[str, Any], report: Dict[str, Any]) -
 
 
 def _report_bbox_size_cm(report: Dict[str, Any]) -> Optional[List[float]]:
-    return _float_list((((report.get("geometry", {}) or {}).get("bbox", {}) or {}).get("world", {}) or {}).get("size"))
+    size = _float_list((((report.get("geometry", {}) or {}).get("bbox", {}) or {}).get("world", {}) or {}).get("size"))
+    meters_per_unit = (report.get("stage", {}) or {}).get("meters_per_unit")
+    return _stage_units_to_cm(size, meters_per_unit)
 
 
 def _runtime_bbox_size_cm(runtime_report: Dict[str, Any]) -> Optional[List[float]]:
     bbox_min = _float_list(runtime_report.get("asset_bbox_min"))
     bbox_max = _float_list(runtime_report.get("asset_bbox_max"))
+    scene = runtime_report.get("scene", {}) or {}
+    meters_per_unit = (
+        _safe_float(scene.get("meters_per_unit"))
+        or _safe_float(runtime_report.get("meters_per_unit"))
+        or _safe_float(runtime_report.get("stage_meters_per_unit"))
+    )
     if not bbox_min or not bbox_max:
+        scene_size = _float_list(scene.get("asset_bbox_size"))
+        converted = _stage_units_to_cm(scene_size, meters_per_unit)
+        if converted:
+            return converted
         return None
-    return [bbox_max[index] - bbox_min[index] for index in range(3)]
+    size = [bbox_max[index] - bbox_min[index] for index in range(3)]
+    return _stage_units_to_cm(size, meters_per_unit)
+
+
+def _runtime_drop_actor_size_cm(runtime_report: Dict[str, Any]) -> Optional[float]:
+    scene = runtime_report.get("scene", {}) or {}
+    scene_box_size = _safe_float(scene.get("drop_box_size"))
+    meters_per_unit = (
+        _safe_float(scene.get("meters_per_unit"))
+        or _safe_float(runtime_report.get("meters_per_unit"))
+        or _safe_float(runtime_report.get("stage_meters_per_unit"))
+    )
+    if scene_box_size is not None:
+        return _stage_unit_to_cm(scene_box_size, meters_per_unit)
+    return _stage_unit_to_cm(_safe_float(runtime_report.get("box_size")), meters_per_unit)
+
+
+def _runtime_motion_observed(runtime_report: Dict[str, Any]) -> Optional[bool]:
+    initial_pose = _float_list(runtime_report.get("initial_pose"), length=7)
+    final_pose = _float_list(runtime_report.get("final_pose"), length=7)
+    if initial_pose and final_pose:
+        return final_pose[2] < initial_pose[2]
+    hit_analysis = runtime_report.get("hit_analysis", {}) or {}
+    if "box_descended" in hit_analysis:
+        return hit_analysis.get("box_descended") is True
+    checks = runtime_report.get("checks", {}) or {}
+    if "simulation_advanced" in checks:
+        return checks.get("simulation_advanced") is True
+    return None
 
 
 def _expected_drop_box_size_cm(expectations: Dict[str, Any]) -> Optional[float]:
@@ -299,6 +357,7 @@ def diagnose_simready(
             reason="runtime report was not provided",
         )
     else:
+        runtime_backend = str(runtime_report.get("backend") or "omni_asset_cli")
         _check(
             checks,
             name="runtime_report_present",
@@ -306,6 +365,30 @@ def diagnose_simready(
             observed="present",
             status="passed",
         )
+        runtime_status = runtime_report.get("status")
+        runtime_unavailable = runtime_backend == "ovphysx" and runtime_status == "unavailable"
+        if runtime_backend == "ovphysx":
+            if runtime_status == "passed":
+                _check(checks, name="ovphysx_runtime_status", expected="passed", observed=runtime_status, status="passed")
+            elif runtime_status == "unavailable":
+                _check(
+                    checks,
+                    name="ovphysx_runtime_status",
+                    expected="passed",
+                    observed=runtime_status,
+                    status="warning",
+                    reason=runtime_report.get("reason") or "ovphysx runtime unavailable",
+                )
+            else:
+                _append_unique(diagnosis, "ovphysx_runtime_failed")
+                _check(
+                    checks,
+                    name="ovphysx_runtime_status",
+                    expected="passed",
+                    observed=runtime_status,
+                    status="failed",
+                    reason=runtime_report.get("reason") or "ovphysx runtime did not pass",
+                )
         _compare_bbox_size(
             checks,
             name="runtime_referenced_asset_bbox",
@@ -323,7 +406,7 @@ def diagnose_simready(
         )
 
         expected_box_size = _expected_drop_box_size_cm(expectations)
-        observed_box_size = _safe_float(runtime_report.get("box_size"))
+        observed_box_size = _runtime_drop_actor_size_cm(runtime_report)
         if expected_box_size is not None and observed_box_size is not None:
             tolerance = max(expected_box_size * 0.1, 0.1)
             if abs(observed_box_size - expected_box_size) > tolerance:
@@ -362,8 +445,25 @@ def diagnose_simready(
                 reason="missing expected or observed drop actor size",
             )
 
+        if runtime_unavailable:
+            _check(
+                checks,
+                name="runtime_physics_execution",
+                expected="ovphysx simulation executed",
+                observed=runtime_status,
+                status="warning",
+                reason="ovphysx runtime was unavailable; motion/contact checks were skipped",
+            )
+            status = _status_from_checks(checks)
+            return {
+                "status": status,
+                "checks": checks,
+                "diagnosis": diagnosis,
+                "suggested_patches": suggested_patches,
+            }
+
         hit_analysis = runtime_report.get("hit_analysis", {}) or {}
-        box_descended = hit_analysis.get("box_descended")
+        box_descended = _runtime_motion_observed(runtime_report)
         if box_descended is not True:
             _append_unique(diagnosis, "runtime_motion_missing")
             _append_patch(
@@ -387,7 +487,10 @@ def diagnose_simready(
 
         runtime_checks = _runtime_checks(runtime_report)
         contact_report = _runtime_contact_report(runtime_report)
-        contact_report_detected = runtime_checks.get("contact_report_detected") or hit_analysis.get("contact_detected")
+        if runtime_backend == "ovphysx":
+            contact_report_detected = runtime_checks.get("contact_detected")
+        else:
+            contact_report_detected = runtime_checks.get("contact_report_detected") or hit_analysis.get("contact_detected")
         if contact_report_detected is True:
             _check(
                 checks,
@@ -429,6 +532,22 @@ def diagnose_simready(
             )
 
         render_capture = ((runtime_report.get("final_state", {}) or {}).get("render_capture", {}) or {})
+        if runtime_backend == "ovphysx":
+            _check(
+                checks,
+                name="render_artifacts",
+                expected="not produced by ovphysx smoke test",
+                observed=None,
+                status="warning",
+                reason="ovphysx smoke test validates physics/contact only",
+            )
+            status = _status_from_checks(checks)
+            return {
+                "status": status,
+                "checks": checks,
+                "diagnosis": diagnosis,
+                "suggested_patches": suggested_patches,
+            }
         render_count = _safe_float(render_capture.get("frame_count"))
         render_errors = render_capture.get("errors") or []
         if render_capture.get("enabled") and render_count and render_count > 0 and not render_errors:

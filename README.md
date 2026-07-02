@@ -148,6 +148,37 @@ collider on the final USD, disables previous authored colliders by default, and
 writes `<output>.mesh_repair.json` with the validate rules that triggered the
 repair. The default policy remains `block`.
 
+### 0.1. Customer-facing HTML report
+
+After `process`, downstream `omni-asset-cli validate`, and optional runtime
+hit/render tests, generate Chinese and English single-page reports for customer
+review:
+
+```bash
+python3 usd_simready_cli.py customer-report \
+  --asset-name cup \
+  --source-usd /path/to/source_mesh.usd \
+  --output-usd out/cup.simready_static.usda \
+  --recommendation out/cup.recommendation.json \
+  --report out/cup.report.json \
+  --omni-validate out/cup.omni_validator.retest.json \
+  --runtime-summary out/cup_omni_tabletop_render_240/summary.json \
+  --runtime-report out/cup_omni_tabletop_render_240/runtime_report.json \
+  --proxy-report out/cup.simready_static.proxy_collider.report.json \
+  --video out/cup_omni_tabletop_render_240/cup_tabletop_hit_240.mp4 \
+  --compress-video \
+  --output-base out/cup.simready_customer_report
+```
+
+The command writes `out/cup.simready_customer_report.zh.html` and
+`out/cup.simready_customer_report.en.html`. The report frames the result as an
+ordinary visual mesh becoming a SimReady asset, then shows what the workflow
+changed, what was tested by the downstream toolchain, and how validation
+artifacts feed the next data-flywheel iteration. When `ffmpeg` is available,
+`--compress-video` creates a smaller MP4 before embedding it in the standalone
+HTML; if the video is still above `--max-embed-mb`, the report falls back to a
+relative video link.
+
 For large mesh-heavy assets, prefer binary USD crate output to avoid very large
 ASCII USDA files:
 
@@ -160,7 +191,7 @@ python3 usd_simready_cli.py process \
   --emit-report
 ```
 
-### 0.1. Optional Codex Agent Skill
+### 0.2. Optional Codex Agent Skill
 
 This repository includes a Codex skill for agents that should use the unified
 CLI consistently:
