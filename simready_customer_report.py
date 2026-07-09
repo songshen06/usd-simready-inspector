@@ -20,7 +20,7 @@ LANG = {
     "zh": {
         "title": "SimReady 资产转化报告",
         "subtitle": "从普通 mesh 到可验证的 SimReady 资产",
-        "value": "核心成果",
+        "value": "核心成果与关键证据",
         "value_copy": "输入资产从只有视觉网格的普通 mesh，经过尺寸归一、坐标系校正、碰撞体 authoring、物理元数据补全和下游运行时验证，形成可进入仿真/机器人/合成数据流程的 SimReady 静态资产。",
         "workflow": "Workflow 做了什么",
         "validation": "检测与验证",
@@ -46,6 +46,10 @@ LANG = {
         "ordinary": "普通 mesh",
         "simready": "SimReady 资产",
         "details": "关键证据",
+        "before": "转化前",
+        "after": "转化后",
+        "explanation": "说明",
+        "expand_details": "查看技术细节",
         "issue_summary": "问题摘要",
         "no_video": "未提供检测视频。",
         "video_note": "视频已嵌入单页报告，可离线交付。",
@@ -55,7 +59,7 @@ LANG = {
     "en": {
         "title": "SimReady Asset Conversion Report",
         "subtitle": "From ordinary mesh to validated SimReady asset",
-        "value": "Outcome",
+        "value": "Outcome And Evidence",
         "value_copy": "The input started as a visual mesh. The workflow normalized physical size, corrected orientation, authored collision and physics metadata, and validated the result downstream so the asset can enter simulation, robotics, and synthetic-data pipelines as a SimReady static asset.",
         "workflow": "What The Workflow Did",
         "validation": "Tests And Validation",
@@ -81,6 +85,10 @@ LANG = {
         "ordinary": "Ordinary mesh",
         "simready": "SimReady asset",
         "details": "Evidence",
+        "before": "Before",
+        "after": "After",
+        "explanation": "Explanation",
+        "expand_details": "View Technical Details",
         "issue_summary": "Issue Summary",
         "no_video": "No validation video was provided.",
         "video_note": "Video is embedded into the single-page report for offline delivery.",
@@ -587,6 +595,115 @@ def _metric_cards(model: Dict[str, Any], labels: Dict[str, str], lang: str) -> s
     return "".join(html_cards)
 
 
+def _outcome_rows(model: Dict[str, Any], labels: Dict[str, str], lang: str) -> str:
+    correction = model.get("correction_result") or {}
+    scale = correction.get("scale") or {}
+    orientation = correction.get("orientation") or {}
+    collider = correction.get("collider") or {}
+    physics_schema = correction.get("physics_schema") or {}
+    runtime = model.get("runtime_validation") or {}
+    downstream = model.get("downstream_validation") or {}
+    source_bbox = _fmt_size(scale.get("source_bbox_cm"))
+    final_bbox = _fmt_size(scale.get("authored_bbox_cm"))
+    target_bbox = _fmt_size(scale.get("reference_target_bbox_cm"))
+    source_up = orientation.get("source_up_axis") or "n/a"
+    output_up = orientation.get("output_up_axis") or "n/a"
+    issue_count = downstream.get("issue_count") or 0
+    frames = runtime.get("frames") or "n/a"
+    contact = _dig(runtime, "checks", "contact_detected_or_inferred", default=None)
+
+    if lang == "zh":
+        rows = [
+            (
+                "资产形态",
+                "普通视觉 mesh",
+                "SimReady static USD",
+                "从只服务渲染的几何，转成带物理能力声明、可进入仿真流程的资产。",
+            ),
+            (
+                "物理尺寸",
+                f"源 bbox {source_bbox} cm",
+                f"最终 bbox {final_bbox} cm",
+                f"{target_bbox} cm 是参考目标范围；本轮使用统一缩放 {_fmt_number(scale.get('applied_uniform_scale'))} 保持原始比例，避免非等比拉伸。",
+            ),
+            (
+                "坐标系",
+                f"{source_up}-up",
+                f"{output_up}-up",
+                f"通过绕 {orientation.get('rotation_axis') or 'n/a'} 轴旋转 {_fmt_number(orientation.get('rotation_degrees'))} 度，把资产归一到下游仿真常用 Stage 方向。",
+            ),
+            (
+                "碰撞与物理",
+                "未面向物理测试 author",
+                f"{collider.get('approximation') or 'n/a'} + Physics schema",
+                "已写入下游可识别的碰撞/质量相关 USD Physics 信息，资产不再只是裸 mesh。",
+            ),
+            (
+                "下游验证",
+                "未形成 runtime 证据",
+                f"{frames} 帧 runtime 验证完成",
+                "流程可运行并产出视频和 JSON 证据；静态校验仍有少量问题，适合进入下一轮自动修正。",
+            ),
+        ]
+        if contact is True:
+            rows[-1] = (rows[-1][0], rows[-1][1], rows[-1][2], "runtime 证据确认碰撞体参与物理测试。")
+        elif contact is False:
+            rows[-1] = (rows[-1][0], rows[-1][1], rows[-1][2], "runtime 已完成并保持尺寸稳定；真实接触证据需要下一轮用更强 contact report 继续确认。")
+    else:
+        rows = [
+            (
+                "Asset State",
+                "Visual mesh",
+                "SimReady static USD",
+                "The asset moves from render-only geometry to a simulation-ready candidate with physical capability metadata.",
+            ),
+            (
+                "Physical Size",
+                f"Source bbox {source_bbox} cm",
+                f"Final bbox {final_bbox} cm",
+                f"{target_bbox} cm is the reference target range. The workflow applies uniform scale {_fmt_number(scale.get('applied_uniform_scale'))} to preserve proportions instead of stretching axes independently.",
+            ),
+            (
+                "Coordinate System",
+                f"{source_up}-up",
+                f"{output_up}-up",
+                f"The asset is normalized to the downstream simulation stage convention with a {_fmt_number(orientation.get('rotation_degrees'))}-degree rotation around {orientation.get('rotation_axis') or 'n/a'}.",
+            ),
+            (
+                "Collision And Physics",
+                "Not authored for physics tests",
+                f"{collider.get('approximation') or 'n/a'} + Physics schema",
+                "The USD now carries simulation-recognizable collision and mass-related metadata, so it is no longer a bare visual mesh.",
+            ),
+            (
+                "Downstream Validation",
+                "No runtime evidence",
+                f"{frames} runtime frames completed",
+                "The workflow runs and produces video plus JSON evidence. Remaining static findings are feedback for the next automated repair iteration.",
+            ),
+        ]
+        if contact is True:
+            rows[-1] = (rows[-1][0], rows[-1][1], rows[-1][2], "Runtime evidence confirms the authored collider participated in the physics test.")
+        elif contact is False:
+            rows[-1] = (rows[-1][0], rows[-1][1], rows[-1][2], "Runtime completed and preserved asset size; stronger contact reporting should confirm contact evidence in the next iteration.")
+
+    html_rows = []
+    for topic, before, after, explanation in rows:
+        html_rows.append(
+            "<tr>"
+            f"<th scope=\"row\">{_escape(topic)}</th>"
+            f"<td>{_escape(before)}</td>"
+            f"<td><strong>{_escape(after)}</strong></td>"
+            f"<td>{_escape(explanation)}</td>"
+            "</tr>"
+        )
+    return (
+        '<table class="outcome-table">'
+        f'<thead><tr><th></th><th>{_escape(labels["before"])}</th><th>{_escape(labels["after"])}</th><th>{_escape(labels["explanation"])}</th></tr></thead>'
+        f"<tbody>{''.join(html_rows)}</tbody></table>"
+    )
+
+
 def _issue_rows(payload: Dict[str, Any]) -> str:
     issues = payload.get("issues") or []
     if not issues:
@@ -637,7 +754,7 @@ def _validation_items(inputs: ReportInputs, lang: str) -> List[str]:
             detail_text = "，".join(detail) if detail else f"{issue_count} 个校验项"
             items.append(
                 "omni-asset-cli 的 Stage 1 静态校验没有完全通过，主要发现"
-                f" {detail_text}。这些问题不会否定本轮自动化写入的价值，但应该进入下一轮数据飞轮修正。"
+                f" {detail_text}。这些问题不会否定本轮自动化写入的价值，但应该进入下一轮自动修正。"
             )
         elif omni:
             items.append("omni-asset-cli 的 Stage 1 静态校验未发现阻塞问题，资产结构满足当前规则集。")
@@ -680,7 +797,7 @@ def _validation_items(inputs: ReportInputs, lang: str) -> List[str]:
         detail_text = ", ".join(detail) if detail else f"{issue_count} validation findings"
         items.append(
             "The omni-asset-cli Stage 1 static validation did not fully pass. It mainly found "
-            f"{detail_text}. These findings do not negate the automated authoring result, but they should feed the next data-flywheel iteration."
+            f"{detail_text}. These findings do not negate the automated authoring result, but they should feed the next automated repair iteration."
         )
     elif omni:
         items.append("The omni-asset-cli Stage 1 static validation found no blocking issues in the current rule set.")
@@ -721,9 +838,7 @@ def render_html(inputs: ReportInputs, lang: str, output_path: str, model: Option
     final_status = _overall_status(runtime.get("result"), runtime.get("status"), omni.get("validation_status"), omni.get("status"))
     video_markup, video_note = _video_html(inputs, labels, output_path)
     workflow = _as_list(_workflow_items(model, inputs, lang))
-    flywheel = _as_list(_dig(model, "data_flywheel", lang, default=[]))
     validation = _as_list(_dig(model, "runtime_validation", f"human_summary_{lang}", default=[]))
-    issue_summary = _issue_summary_html(model, lang)
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     status_text = labels.get(final_status, labels["unknown"])
 
@@ -759,17 +874,25 @@ def render_html(inputs: ReportInputs, lang: str, output_path: str, model: Option
     .pathbox {{ border:1px solid var(--line); border-radius:8px; padding:14px; background:#fbfcfd; min-width:0; }}
     .pathbox strong {{ display:block; margin-bottom:6px; }} .pathbox code {{ word-break:break-all; color:var(--muted); }}
     .arrow {{ font-weight:800; color:var(--blue); }}
+    .outcome-table {{ margin-top:18px; }}
+    .outcome-table th:first-child {{ width:15%; color:var(--ink); }}
+    .outcome-table td:nth-child(3) {{ color:var(--green); }}
+    .outcome-table td:last-child {{ color:var(--muted); line-height:1.45; }}
     .metrics {{ display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }}
     .metric {{ border:1px solid var(--line); border-radius:8px; padding:14px; background:#fbfcfd; }}
     .metric-title {{ font-size:13px; color:var(--muted); margin-bottom:8px; }}
     .metric-primary {{ font-size:20px; font-weight:800; word-break:break-word; }}
     .metric-secondary {{ font-size:13px; color:var(--muted); margin-top:6px; word-break:break-word; }}
     ul {{ margin:0; padding-left:20px; }} li {{ margin:9px 0; line-height:1.45; }}
+    details {{ border:1px solid var(--line); border-radius:8px; background:#fbfcfd; padding:0; margin-bottom:12px; }}
+    summary {{ cursor:pointer; padding:14px 16px; font-weight:800; }}
+    details[open] summary {{ border-bottom:1px solid var(--line); }}
+    details ul {{ padding:8px 22px 16px 36px; }}
     video {{ width:100%; max-height:520px; background:#0b1117; border-radius:8px; display:block; }}
     table {{ width:100%; border-collapse:collapse; font-size:14px; }} th,td {{ text-align:left; border-bottom:1px solid var(--line); padding:10px; vertical-align:top; }}
     th {{ color:var(--muted); font-weight:700; }} .empty {{ color:var(--muted); padding:22px; border:1px dashed var(--line); border-radius:8px; }}
     .foot {{ text-align:right; color:var(--muted); font-size:12px; margin-top:12px; }}
-    @media (max-width: 820px) {{ header {{ padding:28px 22px 18px; }} h1 {{ font-size:28px; }} .span-7,.span-5,.span-12 {{ grid-column:span 12; }} .metrics {{ grid-template-columns:1fr; }} .pathrow {{ grid-template-columns:1fr; }} .arrow {{ display:none; }} }}
+    @media (max-width: 820px) {{ header {{ padding:28px 22px 18px; }} h1 {{ font-size:28px; }} .span-7,.span-5,.span-12 {{ grid-column:span 12; }} .metrics {{ grid-template-columns:1fr; }} .pathrow {{ grid-template-columns:1fr; }} .arrow {{ display:none; }} .outcome-table th,.outcome-table td {{ display:block; width:100%; }} .outcome-table tr {{ display:block; border-bottom:1px solid var(--line); padding:8px 0; }} }}
   </style>
 </head>
 <body>
@@ -780,7 +903,7 @@ def render_html(inputs: ReportInputs, lang: str, output_path: str, model: Option
   </header>
   <main>
     <div class="grid">
-      <section class="span-7">
+      <section class="span-12">
         <h2>{_escape(labels['value'])}</h2>
         <p>{_escape(labels['value_copy'])}</p>
         <div class="pathrow">
@@ -788,31 +911,23 @@ def render_html(inputs: ReportInputs, lang: str, output_path: str, model: Option
           <div class="arrow">-&gt;</div>
           <div class="pathbox"><strong>{_escape(labels['simready'])}</strong><code>{_escape(output_usd or 'n/a')}</code></div>
         </div>
+        {_outcome_rows(model, labels, lang)}
       </section>
-      <section class="span-5">
-        <h2>{_escape(labels['details'])}</h2>
-        <div class="metrics">{_metric_cards(model, labels, lang)}</div>
-      </section>
-      <section class="span-7">
-        <h2>{_escape(labels['workflow'])}</h2>
-        <ul>{workflow}</ul>
-      </section>
-      <section class="span-5">
-        <h2>{_escape(labels['validation'])}</h2>
-        <ul>{validation}</ul>
+      <section class="span-12">
+        <h2>{_escape(labels['expand_details'])}</h2>
+        <details>
+          <summary>{_escape(labels['workflow'])}</summary>
+          <ul>{workflow}</ul>
+        </details>
+        <details>
+          <summary>{_escape(labels['validation'])}</summary>
+          <ul>{validation}</ul>
+        </details>
       </section>
       <section class="span-12">
         <h2>{_escape(labels['evidence'])}</h2>
         {video_markup}
         <p>{_escape(video_note)}</p>
-      </section>
-      <section class="span-7">
-        <h2>{_escape(labels['flywheel'])}</h2>
-        <ul>{flywheel}</ul>
-      </section>
-      <section class="span-5">
-        <h2>{_escape(labels['issue_summary'])}</h2>
-        {issue_summary}
       </section>
     </div>
     <div class="foot">{_escape(labels['generated'])}: {_escape(generated)}</div>
