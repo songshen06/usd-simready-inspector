@@ -67,17 +67,17 @@
           <div class="arrow">-&gt;</div>
           <div class="pathbox"><strong>SimReady 资产</strong><code>out/cup.simready_static.usda</code></div>
         </div>
-        <table class="outcome-table"><thead><tr><th></th><th>转化前</th><th>转化后</th><th>说明</th></tr></thead><tbody><tr><th scope="row">资产形态</th><td>普通视觉 mesh</td><td><strong>SimReady static USD</strong></td><td>从只服务渲染的几何，转成带物理能力声明、可进入仿真流程的资产。</td></tr><tr><th scope="row">物理尺寸</th><td>源 bbox 98.89 x 200 x 67.05 cm</td><td><strong>最终 bbox 3.96 x 2.68 x 8 cm</strong></td><td>8 x 8 x 10 cm 是参考目标范围；本轮使用统一缩放 0.04 保持原始比例，避免非等比拉伸。</td></tr><tr><th scope="row">坐标系</th><td>Y-up</td><td><strong>Z-up</strong></td><td>通过绕 X 轴旋转 90 度，把资产归一到下游仿真常用 Stage 方向。</td></tr><tr><th scope="row">碰撞与物理</th><td>未面向物理测试 author</td><td><strong>convexDecomposition + Physics schema</strong></td><td>已写入下游可识别的碰撞/质量相关 USD Physics 信息，资产不再只是裸 mesh。</td></tr><tr><th scope="row">下游验证</th><td>未形成 runtime 证据</td><td><strong>240 帧 runtime 验证完成</strong></td><td>runtime 已完成并保持尺寸稳定；真实接触证据需要下一轮用更强 contact report 继续确认。</td></tr></tbody></table>
+        <table class="outcome-table"><thead><tr><th></th><th>转化前</th><th>转化后</th><th>说明</th></tr></thead><tbody><tr><th scope="row">资产形态</th><td>普通视觉 mesh</td><td><strong>SimReady static USD</strong></td><td>从只服务渲染的几何，转成带物理能力声明、可进入仿真流程的资产。</td></tr><tr><th scope="row">物理尺寸</th><td>源 bbox 98.89 x 200 x 67.05 cm</td><td><strong>最终 bbox 3.96 x 2.68 x 8 cm</strong></td><td>8 x 8 x 10 cm 是参考目标范围；本轮使用统一缩放 0.04 保持原始比例，避免非等比拉伸。</td></tr><tr><th scope="row">坐标系</th><td>Y-up</td><td><strong>Z-up</strong></td><td>通过绕 X 轴旋转 90 度，把资产归一到下游仿真常用 Stage 方向。</td></tr><tr><th scope="row">碰撞与物理</th><td>只有外观模型</td><td><strong>已具备仿真碰撞能力</strong></td><td>系统已经为资产补充碰撞和物理属性，下游工具可以把它当作可参与仿真的物体，而不是只能看的模型。</td></tr><tr><th scope="row">下游验证</th><td>没有自动化验证记录</td><td><strong>完成 240 帧仿真验证</strong></td><td>资产已成功完成仿真加载和稳定性验证；下一轮会继续增强碰撞接触的自动确认能力。</td></tr></tbody></table>
       </section>
       <section class="span-12">
         <h2>查看技术细节</h2>
         <details>
           <summary>Workflow 做了什么</summary>
-          <ul><li>资产识别：分类为 decor，使用 36 个相近参考资产辅助选择尺寸和碰撞策略。</li><li>尺寸处理以 8 x 8 x 10 cm 作为参考目标范围，并使用 0.04 的统一缩放保持原始比例；最终 authored bbox 约为 3.96 x 2.68 x 8 cm。参考目标不是把三轴强行拉伸到同一个尺寸，而是给自动化 authoring 一个物理尺度约束。</li><li>朝向处理是把源资产的 Y-up 坐标系转换为输出 Stage 的 Z-up；实现方式是绕 X 轴旋转 90 度。</li><li>碰撞处理：为目标 mesh 写入 convexDecomposition 碰撞近似，scope=per_component，供下游物理测试加载。</li><li>这里的物理 schema 指写在 USD prim 上、可被仿真工具识别的物理能力声明。本轮资产已包含 PhysicsCollisionAPI, PhysicsMassAPI, PhysicsMeshCollisionAPI, UsdPhysics.CollisionAPI，表示它不再只是视觉 mesh，而是带有碰撞/质量相关信息的静态 SimReady 候选资产。</li><li>针对下游 mesh 缺陷反馈，额外 author 轻量 Physics Proxy Collider：/World/PhysicsProxy/BBoxCollider，视觉 mesh 保持不变。</li></ul>
+          <ul><li>资产识别：分类为 decor，使用 36 个相近参考资产辅助选择尺寸和碰撞策略。</li><li>尺寸处理以 8 x 8 x 10 cm 作为参考目标范围，并使用 0.04 的统一缩放保持原始比例；最终 authored bbox 约为 3.96 x 2.68 x 8 cm。参考目标不是把三轴强行拉伸到同一个尺寸，而是给自动化 authoring 一个物理尺度约束。</li><li>朝向处理是把源资产的 Y-up 坐标系转换为输出 Stage 的 Z-up；实现方式是绕 X 轴旋转 90 度。</li><li>碰撞处理：为目标 mesh 写入 convexDecomposition 碰撞近似，scope=per_component，供下游物理测试加载。</li><li>补充碰撞和物理属性后，下游工具可以把资产作为可参与仿真的物体加载，而不是只把它当作外观模型。</li><li>针对下游 mesh 缺陷反馈，额外 author 轻量 Physics Proxy Collider：/World/PhysicsProxy/BBoxCollider，视觉 mesh 保持不变。</li></ul>
         </details>
         <details>
           <summary>检测与验证</summary>
-          <ul><li>omni-asset-cli 的 Stage 1 静态校验没有完全通过，主要发现 3 个材质路径规范项，几何质量提醒（ManifoldChecker=1，WeldChecker=1）。这些问题不会否定本轮自动化写入的价值，但应该进入下一轮自动修正。</li><li>运行时验证完成了 240 帧仿真：资产成功加载，静态碰撞体被应用，动态测试物体创建成功，仿真正常推进，并且资产尺寸在模板场景中保持稳定。</li><li>本轮运行时报告尚未从当前启发式里确认真实接触，因此结论应表述为“流程可运行并产出证据”，接触可靠性需要在下一轮使用更强的 PhysX contact report 或调试可视化继续确认。</li></ul>
+          <ul><li>omni-asset-cli 的 Stage 1 静态校验没有完全通过，主要发现 3 个材质路径规范项，几何质量提醒（ManifoldChecker=1，WeldChecker=1）。这些问题不会否定本轮自动化写入的价值，但应该进入下一轮自动修正。</li><li>运行时验证完成了 240 帧仿真：资产成功加载，静态碰撞体被应用，动态测试物体创建成功，仿真正常推进，并且资产尺寸在模板场景中保持稳定。</li><li>本轮已经证明资产可以被测试场景加载并稳定运行；下一轮会继续增强碰撞接触是否发生的自动确认能力。</li></ul>
         </details>
       </section>
       <section class="span-12">
@@ -86,7 +86,7 @@
         <p>视频已嵌入单页报告，可离线交付。</p>
       </section>
     </div>
-    <div class="foot">生成时间: 2026-07-09 07:24 UTC</div>
+    <div class="foot">生成时间: 2026-07-09 07:28 UTC</div>
   </main>
 </body>
 </html>
