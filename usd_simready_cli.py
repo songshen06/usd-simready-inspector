@@ -937,6 +937,7 @@ def build_parser() -> argparse.ArgumentParser:
     customer_report_parser.add_argument("--max-embed-mb", type=float, default=8.0)
     customer_report_parser.add_argument("--no-embed-video", action="store_true")
     customer_report_parser.add_argument("--output-base", help="Base output path when --output-zh/--output-en are omitted")
+    customer_report_parser.add_argument("--output-json", help="Structured customer report JSON output")
     customer_report_parser.add_argument("--output-zh")
     customer_report_parser.add_argument("--output-en")
     customer_report_parser.set_defaults(func=_cmd_customer_report)

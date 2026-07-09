@@ -62,11 +62,11 @@
       </section>
       <section class="span-5">
         <h2>关键证据</h2>
-        <div class="metrics"><article class="metric passed"><div class="metric-title">Stage</div><div class="metric-primary">Z</div><div class="metric-secondary">0.01</div></article><article class="metric passed"><div class="metric-title">尺寸缩放</div><div class="metric-primary">0.04</div><div class="metric-secondary">3.96 x 2.68 x 8</div></article><article class="metric passed"><div class="metric-title">朝向校正</div><div class="metric-primary">Z</div><div class="metric-secondary">90.0</div></article><article class="metric passed"><div class="metric-title">碰撞体</div><div class="metric-primary">convexDecomposition</div><div class="metric-secondary">per_component</div></article><article class="metric passed"><div class="metric-title">物理 Schema</div><div class="metric-primary">present</div><div class="metric-secondary">schemas=5</div></article><article class="metric passed"><div class="metric-title">运行时验证</div><div class="metric-primary">passed</div><div class="metric-secondary">omni=failed</div></article></div>
+        <div class="metrics"><article class="metric passed"><div class="metric-title">资产状态</div><div class="metric-primary">Mesh -&gt; SimReady USD</div><div class="metric-secondary">普通视觉网格已转为静态仿真候选资产</div></article><article class="metric passed"><div class="metric-title">尺寸缩放</div><div class="metric-primary">3.96 x 2.68 x 8</div><div class="metric-secondary">统一缩放=0.04</div></article><article class="metric passed"><div class="metric-title">朝向校正</div><div class="metric-primary">Y-up -&gt; Z-up</div><div class="metric-secondary">绕 X 轴 90 度</div></article><article class="metric passed"><div class="metric-title">碰撞体</div><div class="metric-primary">convexDecomposition</div><div class="metric-secondary">scope=per_component</div></article><article class="metric passed"><div class="metric-title">物理 Schema</div><div class="metric-primary">Collision / Mass metadata</div><div class="metric-secondary">USD Physics metadata present</div></article><article class="metric warning"><div class="metric-title">静态校验</div><div class="metric-primary">仍需迭代</div><div class="metric-secondary">5 个下游静态校验项</div></article><article class="metric passed"><div class="metric-title">运行时验证</div><div class="metric-primary">240 帧完成</div><div class="metric-secondary">接触证据待增强</div></article></div>
       </section>
       <section class="span-7">
         <h2>Workflow 做了什么</h2>
-        <ul><li>识别资产类别和参考组：decor，参考组资产数 36。</li><li>将源 bbox 98.89 x 200 x 67.05 cm 归一到目标参考尺寸 8 x 8 x 10 cm，统一缩放系数 0.04。</li><li>将源 Stage 从 Y-up 校正为 Z-up，旋转 X 轴 90.0 度。</li><li>为目标 mesh author 碰撞能力：convexDecomposition，scope=per_component。</li><li>补全静态仿真需要的 USD Physics schema，包括 CollisionAPI、可选 MassAPI centerOfMass，以及稳定的 defaultPrim/component 元数据。</li><li>针对下游 mesh 缺陷反馈，额外 author 轻量 Physics Proxy Collider：/World/PhysicsProxy/BBoxCollider，视觉 mesh 保持不变。</li></ul>
+        <ul><li>资产识别：分类为 decor，使用 36 个相近参考资产辅助选择尺寸和碰撞策略。</li><li>尺寸处理以 8 x 8 x 10 cm 作为参考目标范围，并使用 0.04 的统一缩放保持原始比例；最终 authored bbox 约为 3.96 x 2.68 x 8 cm。参考目标不是把三轴强行拉伸到同一个尺寸，而是给自动化 authoring 一个物理尺度约束。</li><li>朝向处理是把源资产的 Y-up 坐标系转换为输出 Stage 的 Z-up；实现方式是绕 X 轴旋转 90 度。</li><li>碰撞处理：为目标 mesh 写入 convexDecomposition 碰撞近似，scope=per_component，供下游物理测试加载。</li><li>这里的物理 schema 指写在 USD prim 上、可被仿真工具识别的物理能力声明。本轮资产已包含 PhysicsCollisionAPI, PhysicsMassAPI, PhysicsMeshCollisionAPI, UsdPhysics.CollisionAPI，表示它不再只是视觉 mesh，而是带有碰撞/质量相关信息的静态 SimReady 候选资产。</li><li>针对下游 mesh 缺陷反馈，额外 author 轻量 Physics Proxy Collider：/World/PhysicsProxy/BBoxCollider，视觉 mesh 保持不变。</li></ul>
       </section>
       <section class="span-5">
         <h2>检测与验证</h2>
@@ -83,13 +83,10 @@
       </section>
       <section class="span-5">
         <h2>问题摘要</h2>
-        <table>
-          <thead><tr><th>Severity</th><th>Rule</th><th>Code</th><th>Message</th></tr></thead>
-          <tbody><tr><td>FAILURE</td><td>MaterialPathChecker</td><td>VM.MDL.001</td><td>Relative path gltf/pbr.mdl should be corrected to ./gltf/pbr.mdl.</td></tr><tr><td>FAILURE</td><td>MaterialPathChecker</td><td>VM.MDL.001</td><td>Relative path gltf/pbr.mdl should be corrected to ./gltf/pbr.mdl.</td></tr><tr><td>FAILURE</td><td>MaterialPathChecker</td><td>VM.MDL.001</td><td>Relative path gltf/pbr.mdl should be corrected to ./gltf/pbr.mdl.</td></tr><tr><td>WARNING</td><td>ManifoldChecker</td><td>VG.007</td><td>565 vertices are non-manifold.</td></tr><tr><td>WARNING</td><td>WeldChecker</td><td>VG.016</td><td>Some points are co-located and may be able to be merged.</td></tr></tbody>
-        </table>
+        <ul><li>Mesh 层面仍有 2 个几何质量问题，主要影响碰撞稳定性和后续批量自动化可信度。</li><li>SimReady/资产规范层面仍有 3 个问题，优先处理材质路径、Stage 元数据或引用规范。</li></ul>
       </section>
     </div>
-    <div class="foot">生成时间: 2026-07-02 09:38 UTC</div>
+    <div class="foot">生成时间: 2026-07-09 07:11 UTC</div>
   </main>
 </body>
 </html>

@@ -41,6 +41,8 @@ LANG = {
         "metric_collider": "碰撞体",
         "metric_physics": "物理 Schema",
         "metric_runtime": "运行时验证",
+        "metric_asset_state": "资产状态",
+        "metric_static_validation": "静态校验",
         "ordinary": "普通 mesh",
         "simready": "SimReady 资产",
         "details": "关键证据",
@@ -74,6 +76,8 @@ LANG = {
         "metric_collider": "Collider",
         "metric_physics": "Physics Schema",
         "metric_runtime": "Runtime Validation",
+        "metric_asset_state": "Asset State",
+        "metric_static_validation": "Static Validation",
         "ordinary": "Ordinary mesh",
         "simready": "SimReady asset",
         "details": "Evidence",
@@ -135,6 +139,15 @@ def _fmt_size(values: Any) -> str:
     if isinstance(values, list) and len(values) == 3:
         return " x ".join(_fmt_number(v, 2) for v in values)
     return "n/a"
+
+
+def _num_list(values: Any) -> Optional[List[float]]:
+    if not isinstance(values, list) or len(values) != 3:
+        return None
+    try:
+        return [float(item) for item in values]
+    except (TypeError, ValueError):
+        return None
 
 
 def _status_key(*statuses: Any) -> str:
@@ -230,7 +243,254 @@ def _video_html(inputs: ReportInputs, labels: Dict[str, str], output_path: str) 
     )
 
 
-def _workflow_items(inputs: ReportInputs, lang: str) -> List[str]:
+MESH_LAYER_RULES = {
+    "ValidateTopologyChecker",
+    "ManifoldChecker",
+    "ZeroAreaFaceChecker",
+    "NormalsValidChecker",
+    "WeldChecker",
+}
+
+SIMREADY_LAYER_RULES = {
+    "DefaultPrimChecker",
+    "ExtentsChecker",
+    "MaterialPathChecker",
+    "MissingReferenceChecker",
+    "StageMetadataChecker",
+    "UsdDanglingMaterialBinding",
+    "UsdMaterialBindingApi",
+}
+
+
+def _compact_issue(issue: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "severity": issue.get("severity"),
+        "rule": issue.get("rule"),
+        "code": issue.get("code"),
+        "message": issue.get("message"),
+        "at": issue.get("at"),
+    }
+
+
+def _group_issues(omni: Dict[str, Any]) -> Dict[str, Any]:
+    buckets = {
+        "mesh_layer": [],
+        "simready_layer": [],
+        "other_layer": [],
+    }
+    for issue in omni.get("issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        rule = str(issue.get("rule") or "")
+        if rule in MESH_LAYER_RULES:
+            buckets["mesh_layer"].append(_compact_issue(issue))
+        elif rule in SIMREADY_LAYER_RULES:
+            buckets["simready_layer"].append(_compact_issue(issue))
+        else:
+            buckets["other_layer"].append(_compact_issue(issue))
+
+    grouped: Dict[str, Any] = {}
+    for key, issues in buckets.items():
+        grouped[key] = {
+            "status": "passed" if not issues else "needs_iteration",
+            "issue_count": len(issues),
+            "issues": issues,
+        }
+    grouped["raw_validator_summary"] = omni.get("summary") or {}
+    return grouped
+
+
+def _issue_summary_text(grouped: Dict[str, Any], lang: str) -> List[str]:
+    mesh_count = _dig(grouped, "mesh_layer", "issue_count", default=0) or 0
+    simready_count = _dig(grouped, "simready_layer", "issue_count", default=0) or 0
+    other_count = _dig(grouped, "other_layer", "issue_count", default=0) or 0
+    if lang == "zh":
+        items = []
+        if mesh_count:
+            items.append(f"Mesh 层面仍有 {mesh_count} 个几何质量问题，主要影响碰撞稳定性和后续批量自动化可信度。")
+        else:
+            items.append("Mesh 层面当前没有被下游静态规则标记的问题。")
+        if simready_count:
+            items.append(f"SimReady/资产规范层面仍有 {simready_count} 个问题，优先处理材质路径、Stage 元数据或引用规范。")
+        else:
+            items.append("SimReady/资产规范层面当前没有被下游静态规则标记的问题。")
+        if other_count:
+            items.append(f"另有 {other_count} 个其他规则项，需要按具体规则继续归类。")
+        return items
+    items = []
+    if mesh_count:
+        items.append(f"The mesh layer still has {mesh_count} geometry-quality finding(s), which mainly affect collision stability and batch automation confidence.")
+    else:
+        items.append("The mesh layer has no findings from the downstream static rule set.")
+    if simready_count:
+        items.append(f"The SimReady/asset-conformance layer still has {simready_count} finding(s), mainly around material paths, stage metadata, or reference hygiene.")
+    else:
+        items.append("The SimReady/asset-conformance layer has no findings from the downstream static rule set.")
+    if other_count:
+        items.append(f"There are {other_count} additional finding(s) that should be classified by rule in the next iteration.")
+    return items
+
+
+def _physics_schema_narrative(schemas: List[str], lang: str) -> str:
+    names = ", ".join(schemas[:4]) if schemas else "USD Physics metadata"
+    if lang == "zh":
+        return (
+            f"这里的物理 schema 指写在 USD prim 上、可被仿真工具识别的物理能力声明。本轮资产已包含 {names}，"
+            "表示它不再只是视觉 mesh，而是带有碰撞/质量相关信息的静态 SimReady 候选资产。"
+        )
+    return (
+        f"Physics schema means USD prim metadata that simulation tools can recognize. This asset contains {names}, "
+        "so it is no longer just visual geometry; it carries collision and mass-related information for a static SimReady candidate."
+    )
+
+
+def _build_report_model(inputs: ReportInputs) -> Dict[str, Any]:
+    rec = inputs.recommendation
+    report = inputs.inspection_report
+    omni = inputs.omni_validate
+    runtime = inputs.runtime_summary or inputs.runtime_report
+    authoring = _dig(rec, "recommendation", "authoring", default={}) or {}
+    collision = _dig(rec, "recommendation", "collision_plan", default={}) or {}
+    orientation = _dig(rec, "recommendation", "orientation_recommendation", default={}) or {}
+    checks = runtime.get("checks") or {}
+
+    source_bbox = _num_list(_dig(rec, "simready_expectations", "source_bbox_size_cm"))
+    if source_bbox is None:
+        source_bbox = _num_list(_dig(rec, "recommendation", "size", "bbox_size"))
+    if source_bbox is None:
+        source_bbox = _num_list(_dig(rec, "asset", "size", "bbox_size"))
+    target_bbox = _num_list(_dig(rec, "simready_expectations", "reference_target_bbox_cm"))
+    if target_bbox is None:
+        target_bbox = _num_list(_dig(rec, "recommendation", "size_recommendation", "reference_target_bbox"))
+    authored_bbox = _num_list(_dig(rec, "simready_expectations", "expected_authored_bbox_size_cm"))
+    scale = authoring.get("suggested_uniform_scale")
+    if scale is None:
+        scale = _dig(rec, "recommendation", "size_recommendation", "suggested_uniform_scale")
+
+    source_up = _dig(rec, "simready_expectations", "units", "source_up_axis", default=orientation.get("from_axis"))
+    output_up = _dig(report, "stage", "up_axis", default=_dig(rec, "simready_expectations", "units", "expected_output_up_axis", default=orientation.get("to_axis")))
+    schemas = _dig(report, "physics", "physics_schemas_detected", default=[]) or []
+    if not schemas and _dig(report, "summary", "has_any_physics", default=False):
+        schemas = ["USD Physics metadata present"]
+
+    grouped = _group_issues(omni)
+    runtime_status = _status_key(runtime.get("result"), runtime.get("status"))
+    omni_status = _status_key(omni.get("validation_status"), omni.get("status"))
+    if omni_status == "unknown":
+        omni_status = _status_key(omni.get("execution_status"))
+
+    return {
+        "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "asset": {
+            "asset_name": inputs.asset_name,
+            "source_usd": inputs.source_usd or _dig(rec, "asset", "file"),
+            "output_usd": inputs.output_usd or report.get("file") or _dig(rec, "simready_expectations", "output_usd"),
+            "state_transition": {
+                "from": "ordinary_mesh",
+                "to": "simready_static_usd",
+            },
+        },
+        "source_assessment": grouped,
+        "correction_result": {
+            "scale": {
+                "source_bbox_cm": source_bbox,
+                "reference_target_bbox_cm": target_bbox,
+                "applied_uniform_scale": scale,
+                "authored_bbox_cm": authored_bbox,
+                "narrative_zh": (
+                    f"尺寸处理以 {_fmt_size(target_bbox)} cm 作为参考目标范围，并使用 {_fmt_number(scale)} 的统一缩放保持原始比例；"
+                    f"最终 authored bbox 约为 {_fmt_size(authored_bbox)} cm。参考目标不是把三轴强行拉伸到同一个尺寸，而是给自动化 authoring 一个物理尺度约束。"
+                ),
+                "narrative_en": (
+                    f"Size handling uses {_fmt_size(target_bbox)} cm as the reference target range and applies a uniform scale of {_fmt_number(scale)} to preserve proportions; "
+                    f"the final authored bbox is about {_fmt_size(authored_bbox)} cm. The reference target is a physical-size constraint, not a forced non-uniform stretch."
+                ),
+            },
+            "orientation": {
+                "source_up_axis": source_up,
+                "output_up_axis": output_up,
+                "rotation_axis": orientation.get("axis"),
+                "rotation_degrees": orientation.get("degrees"),
+                "narrative_zh": (
+                    f"朝向处理是把源资产的 {source_up}-up 坐标系转换为输出 Stage 的 {output_up}-up；"
+                    f"实现方式是绕 {orientation.get('axis', 'n/a')} 轴旋转 {_fmt_number(orientation.get('degrees'))} 度。"
+                ),
+                "narrative_en": (
+                    f"Orientation handling converts the source asset from {source_up}-up to the output stage's {output_up}-up convention, "
+                    f"implemented as a {_fmt_number(orientation.get('degrees'))}-degree rotation around the {orientation.get('axis', 'n/a')} axis."
+                ),
+            },
+            "collider": {
+                "approximation": collision.get("usd_approximation") or authoring.get("approximation"),
+                "scope": collision.get("scope") or authoring.get("collider_scope"),
+                "target_mesh_paths": collision.get("target_mesh_paths") or authoring.get("target_mesh_paths") or [],
+                "proxy_path": inputs.proxy_report.get("proxy_path"),
+                "visual_mesh_modified": inputs.proxy_report.get("visual_mesh_modified"),
+            },
+            "physics_schema": {
+                "detected": bool(schemas),
+                "schemas": schemas,
+                "narrative_zh": _physics_schema_narrative(schemas, "zh"),
+                "narrative_en": _physics_schema_narrative(schemas, "en"),
+            },
+        },
+        "runtime_validation": {
+            "status": runtime_status,
+            "frames": runtime.get("frames"),
+            "checks": checks,
+            "human_summary_zh": _validation_items(inputs, "zh"),
+            "human_summary_en": _validation_items(inputs, "en"),
+        },
+        "downstream_validation": {
+            "status": omni_status,
+            "issue_count": _dig(omni, "summary", "issue_count", default=0),
+            "severity_counts": _dig(omni, "summary", "severity_counts", default={}),
+            "rule_counts": _dig(omni, "summary", "rule_counts", default={}),
+        },
+        "issue_summary": {
+            "zh": _issue_summary_text(grouped, "zh"),
+            "en": _issue_summary_text(grouped, "en"),
+        },
+        "data_flywheel": {
+            "zh": _flywheel_items("zh"),
+            "en": _flywheel_items("en"),
+        },
+    }
+
+
+def _workflow_items(model: Dict[str, Any], inputs: ReportInputs, lang: str) -> List[str]:
+    correction = model.get("correction_result") or {}
+    scale = correction.get("scale") or {}
+    orientation = correction.get("orientation") or {}
+    collider = correction.get("collider") or {}
+    physics_schema = correction.get("physics_schema") or {}
+    rec = inputs.recommendation
+    proxy_path = collider.get("proxy_path")
+    if lang == "zh":
+        items = [
+            f"资产识别：分类为 {_dig(rec, 'recommendation', 'furniture_class', default='unknown')}，使用 {_dig(rec, 'recommendation', 'reference_group_asset_count', default='n/a')} 个相近参考资产辅助选择尺寸和碰撞策略。",
+            scale.get("narrative_zh", ""),
+            orientation.get("narrative_zh", ""),
+            f"碰撞处理：为目标 mesh 写入 {collider.get('approximation') or 'n/a'} 碰撞近似，scope={collider.get('scope') or 'n/a'}，供下游物理测试加载。",
+            physics_schema.get("narrative_zh", ""),
+        ]
+        if proxy_path:
+            items.append(f"针对下游 mesh 缺陷反馈，额外 author 轻量 Physics Proxy Collider：{proxy_path}，视觉 mesh 保持不变。")
+    else:
+        items = [
+            f"Asset identification: classified as {_dig(rec, 'recommendation', 'furniture_class', default='unknown')} and compared with {_dig(rec, 'recommendation', 'reference_group_asset_count', default='n/a')} similar reference assets for sizing and collision strategy.",
+            scale.get("narrative_en", ""),
+            orientation.get("narrative_en", ""),
+            f"Collision handling: authored {collider.get('approximation') or 'n/a'} collision approximation on the target mesh, scope={collider.get('scope') or 'n/a'}, so downstream physics tests can load it.",
+            physics_schema.get("narrative_en", ""),
+        ]
+        if proxy_path:
+            items.append(f"Used downstream mesh-defect feedback to author a lightweight Physics Proxy Collider at {proxy_path}, while preserving the visual mesh.")
+    return items
+
+
+def _legacy_workflow_items(inputs: ReportInputs, lang: str) -> List[str]:
     rec = inputs.recommendation
     authoring = _dig(rec, "recommendation", "authoring", default={}) or {}
     size_rec = _dig(rec, "recommendation", "size_recommendation", default={}) or {}
@@ -276,21 +536,47 @@ def _flywheel_items(lang: str) -> List[str]:
     ]
 
 
-def _metric_cards(inputs: ReportInputs, labels: Dict[str, str]) -> str:
-    report = inputs.inspection_report
-    rec = inputs.recommendation
-    omni = inputs.omni_validate
-    runtime = inputs.runtime_summary or inputs.runtime_report
-    has_physics = bool(_dig(report, "summary", "has_any_physics", default=False))
-    runtime_status = _status_key(runtime.get("result"), runtime.get("status"))
-    omni_status = _status_key(omni.get("validation_status"), omni.get("status"), omni.get("execution_status"))
+def _metric_cards(model: Dict[str, Any], labels: Dict[str, str], lang: str) -> str:
+    correction = model.get("correction_result") or {}
+    scale = correction.get("scale") or {}
+    orientation = correction.get("orientation") or {}
+    collider = correction.get("collider") or {}
+    physics_schema = correction.get("physics_schema") or {}
+    runtime = model.get("runtime_validation") or {}
+    downstream = model.get("downstream_validation") or {}
+    final_bbox = _fmt_size(scale.get("authored_bbox_cm"))
+    source_up = orientation.get("source_up_axis") or "n/a"
+    output_up = orientation.get("output_up_axis") or "n/a"
+    issue_count = downstream.get("issue_count") or 0
+    static_status = "passed" if issue_count == 0 else "warning"
+    runtime_status = runtime.get("status") or "unknown"
+    contact = _dig(runtime, "checks", "contact_detected_or_inferred", default=None)
+    if lang == "zh":
+        asset_secondary = "普通视觉网格已转为静态仿真候选资产"
+        scale_secondary = f"统一缩放={_fmt_number(scale.get('applied_uniform_scale'))}"
+        orientation_secondary = f"绕 {orientation.get('rotation_axis') or 'n/a'} 轴 {_fmt_number(orientation.get('rotation_degrees'))} 度"
+        collider_secondary = "USD Physics metadata present" if physics_schema.get("detected") else "physics metadata missing"
+        static_primary = "仍需迭代" if issue_count else "通过"
+        static_secondary = f"{issue_count} 个下游静态校验项"
+        runtime_primary = f"{runtime.get('frames') or 'n/a'} 帧完成" if runtime_status == "passed" else runtime_status
+        runtime_secondary = "接触证据待增强" if contact is False else ("接触已确认" if contact is True else "runtime evidence")
+    else:
+        asset_secondary = "Visual geometry converted into a static simulation candidate"
+        scale_secondary = f"uniform scale={_fmt_number(scale.get('applied_uniform_scale'))}"
+        orientation_secondary = f"rotate {orientation.get('rotation_axis') or 'n/a'} {_fmt_number(orientation.get('rotation_degrees'))} deg"
+        collider_secondary = "USD Physics metadata present" if physics_schema.get("detected") else "physics metadata missing"
+        static_primary = "Needs iteration" if issue_count else "Passed"
+        static_secondary = f"{issue_count} downstream static finding(s)"
+        runtime_primary = f"{runtime.get('frames') or 'n/a'} frames completed" if runtime_status == "passed" else runtime_status
+        runtime_secondary = "contact evidence pending" if contact is False else ("contact confirmed" if contact is True else "runtime evidence")
     cards = [
-        (labels["metric_stage"], _dig(report, "stage", "up_axis", default="n/a"), _dig(report, "stage", "meters_per_unit", default="n/a"), "passed" if report else "unknown"),
-        (labels["metric_scale"], _fmt_number(_dig(rec, "recommendation", "authoring", "suggested_uniform_scale")), _fmt_size(_dig(rec, "simready_expectations", "expected_authored_bbox_size_cm")), "passed" if _dig(rec, "recommendation", "authoring", "apply_reference_scale") else "warning"),
-        (labels["metric_orientation"], _dig(report, "stage", "up_axis", default="n/a"), _dig(rec, "recommendation", "orientation_recommendation", "degrees", default="n/a"), "passed" if _dig(rec, "recommendation", "orientation_recommendation", "apply") else "unknown"),
-        (labels["metric_collider"], _dig(rec, "recommendation", "collision_plan", "usd_approximation", default=_dig(rec, "recommendation", "authoring", "approximation", default="n/a")), _dig(rec, "recommendation", "collision_plan", "scope", default="n/a"), "passed" if _dig(rec, "recommendation", "collision_plan", "auto_apply_safe") else "warning"),
-        (labels["metric_physics"], "present" if has_physics else "missing", f"schemas={len(_dig(report, 'physics', 'physics_schemas_detected', default=[]))}", "passed" if has_physics else "warning"),
-        (labels["metric_runtime"], runtime.get("result") or runtime.get("status") or "n/a", f"omni={omni.get('validation_status') or omni.get('status') or 'n/a'}", runtime_status if runtime_status != "unknown" else omni_status),
+        (labels["metric_asset_state"], "Mesh -> SimReady USD", asset_secondary, "passed"),
+        (labels["metric_scale"], final_bbox, scale_secondary, "passed" if scale.get("applied_uniform_scale") else "warning"),
+        (labels["metric_orientation"], f"{source_up}-up -> {output_up}-up", orientation_secondary, "passed" if output_up != "n/a" else "unknown"),
+        (labels["metric_collider"], collider.get("approximation") or "n/a", f"scope={collider.get('scope') or 'n/a'}", "passed" if collider.get("approximation") else "warning"),
+        (labels["metric_physics"], "Collision / Mass metadata", collider_secondary, "passed" if physics_schema.get("detected") else "warning"),
+        (labels["metric_static_validation"], static_primary, static_secondary, static_status),
+        (labels["metric_runtime"], runtime_primary, runtime_secondary, runtime_status),
     ]
     html_cards = []
     for title, primary, secondary, status in cards:
@@ -316,6 +602,11 @@ def _issue_rows(payload: Dict[str, Any]) -> str:
             "</tr>"
         )
     return "".join(rows)
+
+
+def _issue_summary_html(model: Dict[str, Any], lang: str) -> str:
+    issue_summary = _dig(model, "issue_summary", lang, default=[]) or []
+    return f"<ul>{_as_list(issue_summary)}</ul>"
 
 
 def _validation_items(inputs: ReportInputs, lang: str) -> List[str]:
@@ -417,8 +708,9 @@ def _validation_items(inputs: ReportInputs, lang: str) -> List[str]:
     return items
 
 
-def render_html(inputs: ReportInputs, lang: str, output_path: str) -> str:
+def render_html(inputs: ReportInputs, lang: str, output_path: str, model: Optional[Dict[str, Any]] = None) -> str:
     labels = LANG[lang]
+    model = model or _build_report_model(inputs)
     report = inputs.inspection_report
     rec = inputs.recommendation
     omni = inputs.omni_validate
@@ -428,9 +720,10 @@ def render_html(inputs: ReportInputs, lang: str, output_path: str) -> str:
     source_usd = inputs.source_usd or _dig(rec, "asset", "file", default=_dig(rec, "simready_expectations", "source_usd"))
     final_status = _overall_status(runtime.get("result"), runtime.get("status"), omni.get("validation_status"), omni.get("status"))
     video_markup, video_note = _video_html(inputs, labels, output_path)
-    workflow = _as_list(_workflow_items(inputs, lang))
-    flywheel = _as_list(_flywheel_items(lang))
-    validation = _as_list(_validation_items(inputs, lang))
+    workflow = _as_list(_workflow_items(model, inputs, lang))
+    flywheel = _as_list(_dig(model, "data_flywheel", lang, default=[]))
+    validation = _as_list(_dig(model, "runtime_validation", f"human_summary_{lang}", default=[]))
+    issue_summary = _issue_summary_html(model, lang)
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     status_text = labels.get(final_status, labels["unknown"])
 
@@ -498,7 +791,7 @@ def render_html(inputs: ReportInputs, lang: str, output_path: str) -> str:
       </section>
       <section class="span-5">
         <h2>{_escape(labels['details'])}</h2>
-        <div class="metrics">{_metric_cards(inputs, labels)}</div>
+        <div class="metrics">{_metric_cards(model, labels, lang)}</div>
       </section>
       <section class="span-7">
         <h2>{_escape(labels['workflow'])}</h2>
@@ -519,10 +812,7 @@ def render_html(inputs: ReportInputs, lang: str, output_path: str) -> str:
       </section>
       <section class="span-5">
         <h2>{_escape(labels['issue_summary'])}</h2>
-        <table>
-          <thead><tr><th>Severity</th><th>Rule</th><th>Code</th><th>Message</th></tr></thead>
-          <tbody>{_issue_rows(omni)}</tbody>
-        </table>
+        {issue_summary}
       </section>
     </div>
     <div class="foot">{_escape(labels['generated'])}: {_escape(generated)}</div>
@@ -573,11 +863,20 @@ def generate_reports(args: argparse.Namespace) -> List[str]:
     output_dir = os.path.dirname(os.path.abspath(outputs[0][1])) or "."
     os.makedirs(output_dir, exist_ok=True)
     inputs = build_report_inputs(args, output_dir)
+    model = _build_report_model(inputs)
 
-    written: List[str] = []
+    json_output = args.output_json
+    if not json_output:
+        base = args.output_base or os.path.splitext(outputs[0][1])[0].removesuffix(".zh").removesuffix(".en")
+        json_output = f"{base}.summary.json"
+    os.makedirs(os.path.dirname(os.path.abspath(json_output)) or ".", exist_ok=True)
+    with open(json_output, "w", encoding="utf-8") as handle:
+        json.dump(model, handle, ensure_ascii=False, indent=2)
+
+    written: List[str] = [json_output]
     for lang, output_path in outputs:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
-        html_text = render_html(inputs, lang, output_path)
+        html_text = render_html(inputs, lang, output_path, model)
         with open(output_path, "w", encoding="utf-8") as handle:
             handle.write(html_text)
         written.append(output_path)
@@ -603,6 +902,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-embed-mb", type=float, default=8.0)
     parser.add_argument("--no-embed-video", action="store_true")
     parser.add_argument("--output-base", help="Base output path when --output-zh/--output-en are omitted")
+    parser.add_argument("--output-json", help="Structured customer report JSON output")
     parser.add_argument("--output-zh")
     parser.add_argument("--output-en")
     return parser
