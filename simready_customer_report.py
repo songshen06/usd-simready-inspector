@@ -113,6 +113,7 @@ class ReportInputs:
     compressed_video_path: Optional[str]
     embed_video: bool
     max_embed_bytes: int
+    require_video: bool
 
 
 def _load_json(path: Optional[str]) -> Dict[str, Any]:
@@ -1005,6 +1006,18 @@ def build_report_inputs(args: argparse.Namespace, output_dir: str) -> ReportInpu
     if args.video and args.compress_video and not compressed:
         compressed = _compress_video(args.video, output_dir, args.video_max_width, args.video_crf)
     max_embed_bytes = int(float(args.max_embed_mb) * 1024 * 1024)
+    chosen_video = _first_existing(compressed, args.video)
+    if args.require_video:
+        if not chosen_video:
+            raise ValueError("--require-video was set, but no existing --video or --compressed-video was provided")
+        video_size = os.path.getsize(chosen_video)
+        if video_size <= 0:
+            raise ValueError(f"--require-video was set, but video is empty: {chosen_video}")
+        if not args.no_embed_video and video_size > max_embed_bytes:
+            raise ValueError(
+                "--require-video was set, but the selected video is larger than --max-embed-mb; "
+                "increase --max-embed-mb, pass --compress-video, or provide --compressed-video"
+            )
     return ReportInputs(
         asset_name=args.asset_name or _dig(recommendation, "asset", "asset_id", default="asset"),
         source_usd=args.source_usd,
@@ -1019,6 +1032,7 @@ def build_report_inputs(args: argparse.Namespace, output_dir: str) -> ReportInpu
         compressed_video_path=compressed,
         embed_video=not args.no_embed_video,
         max_embed_bytes=max_embed_bytes,
+        require_video=args.require_video,
     )
 
 
@@ -1073,6 +1087,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--video-crf", type=int, default=32)
     parser.add_argument("--max-embed-mb", type=float, default=8.0)
     parser.add_argument("--no-embed-video", action="store_true")
+    parser.add_argument(
+        "--require-video",
+        action="store_true",
+        help="Fail if no non-empty video can be used; when embedding is enabled the video must fit --max-embed-mb",
+    )
     parser.add_argument("--output-base", help="Base output path when --output-zh/--output-en are omitted")
     parser.add_argument("--output-json", help="Structured customer report JSON output")
     parser.add_argument("--output-zh")

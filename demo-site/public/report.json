@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-09T09:18:33.745781+00:00",
+  "generated_at": "2026-07-09T09:33:24.832362+00:00",
   "asset": {
-    "asset_name": "cup_demo_20260709_stable_cup_drop_video",
+    "asset_name": "cup_demo_20260709_no_video_until_retry",
     "source_usd": "/home/horde/new_3D/cup.usd",
     "output_usd": "out/cup_demo_20260709.simready.usda",
     "state_transition": {

@@ -214,6 +214,46 @@ For a strong runtime result, the downstream summary should contain
 `contact_evidence_level == "detected"`. If rendered video times out, keep the
 HTML report focused on the contact JSON evidence and regenerate video later.
 
+When a customer report must include video, use an explicit video acceptance
+step before publishing:
+
+```bash
+ffprobe -v error \
+  -show_entries format=duration,size \
+  -show_entries stream=codec_type,codec_name,width,height,nb_frames \
+  -of json out/cup_stage1_runtime/render_videos/front.mp4
+
+.venv/bin/python -B usd_simready_cli.py customer-report \
+  --asset-name cup \
+  --source-usd /path/to/source_mesh.usd \
+  --output-usd out/cup.simready_static.usda \
+  --recommendation out/cup.recommendation.json \
+  --report out/cup.report.json \
+  --omni-validate out/cup.mesh_preflight.json \
+  --runtime-summary out/cup_stage1_runtime/contact_evidence/summary.json \
+  --runtime-report out/cup_stage1_runtime/contact_evidence/runtime_report.json \
+  --proxy-report out/cup.proxy_collider.report.json \
+  --video out/cup_stage1_runtime/render_videos/front.mp4 \
+  --require-video \
+  --compress-video \
+  --output-json out/cup.customer_report.summary.json \
+  --output-zh out/cup.customer_report.zh.html \
+  --output-en out/cup.customer_report.en.html
+```
+
+`--require-video` prevents a publishable report from silently falling back to
+"no video" when the MP4 is missing, empty, or too large to embed. Do not pass
+synthetic placeholder videos, old videos from another run, or videos for a
+different asset as customer evidence. The video must come from the same
+workflow output directory as the accepted `summary.json` / `runtime_report.json`
+or from an explicitly documented retry for the same input USD and same
+SimReady output USD. If the visual render log stops at
+`capture-first-frame-start` and stderr contains `cudaErrorNoDevice`, keep the
+accepted contact evidence, publish without video if needed, then regenerate
+visual evidence with the more stable hit-test host-encode path in
+`omni-asset-cli`, or rerun `asset-table-drop` on a machine/container with a
+working CUDA render device.
+
 For large mesh-heavy assets, prefer binary USD crate output to avoid very large
 ASCII USDA files:
 

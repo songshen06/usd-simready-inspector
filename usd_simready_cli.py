@@ -607,8 +607,12 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
 
 
 def _cmd_customer_report(args: argparse.Namespace) -> int:
-    for path in generate_reports(args):
-        print(path)
+    try:
+        for path in generate_reports(args):
+            print(path)
+    except ValueError as exc:
+        print(f"customer-report: {exc}", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -936,6 +940,11 @@ def build_parser() -> argparse.ArgumentParser:
     customer_report_parser.add_argument("--video-crf", type=int, default=32)
     customer_report_parser.add_argument("--max-embed-mb", type=float, default=8.0)
     customer_report_parser.add_argument("--no-embed-video", action="store_true")
+    customer_report_parser.add_argument(
+        "--require-video",
+        action="store_true",
+        help="Fail if no non-empty video can be used; when embedding is enabled the video must fit --max-embed-mb",
+    )
     customer_report_parser.add_argument("--output-base", help="Base output path when --output-zh/--output-en are omitted")
     customer_report_parser.add_argument("--output-json", help="Structured customer report JSON output")
     customer_report_parser.add_argument("--output-zh")
