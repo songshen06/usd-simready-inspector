@@ -1,0 +1,350 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-09T08:53:56.877127+00:00",
+  "asset": {
+    "asset_name": "cup_demo_20260709",
+    "source_usd": "/home/horde/new_3D/cup.usd",
+    "output_usd": "out/cup_demo_20260709.simready.usda",
+    "state_transition": {
+      "from": "ordinary_mesh",
+      "to": "simready_static_usd"
+    }
+  },
+  "source_assessment": {
+    "mesh_layer": {
+      "status": "needs_iteration",
+      "issue_count": 2,
+      "issues": [
+        {
+          "severity": "WARNING",
+          "rule": "ManifoldChecker",
+          "code": "VG.007",
+          "message": "565 vertices are non-manifold.",
+          "at": "Prim </World/mesh/mesh>"
+        },
+        {
+          "severity": "WARNING",
+          "rule": "WeldChecker",
+          "code": "VG.016",
+          "message": "Some points are co-located and may be able to be merged.",
+          "at": "Attribute (points) Prim </World/mesh/mesh>"
+        }
+      ]
+    },
+    "simready_layer": {
+      "status": "passed",
+      "issue_count": 0,
+      "issues": []
+    },
+    "other_layer": {
+      "status": "passed",
+      "issue_count": 0,
+      "issues": []
+    },
+    "raw_validator_summary": {
+      "issue_count": 2,
+      "severity_counts": {
+        "WARNING": 2
+      },
+      "rule_counts": {
+        "ManifoldChecker": 1,
+        "WeldChecker": 1
+      }
+    }
+  },
+  "correction_result": {
+    "scale": {
+      "source_bbox_cm": [
+        98.894409,
+        200.0,
+        67.0476
+      ],
+      "reference_target_bbox_cm": [
+        8.0,
+        8.0,
+        10.0
+      ],
+      "applied_uniform_scale": 0.04,
+      "authored_bbox_cm": [
+        3.9557763599999998,
+        2.6819040000000003,
+        8.0
+      ],
+      "narrative_zh": "尺寸处理以 8 x 8 x 10 cm 作为参考目标范围，并使用 0.04 的统一缩放保持原始比例；最终 authored bbox 约为 3.96 x 2.68 x 8 cm。参考目标不是把三轴强行拉伸到同一个尺寸，而是给自动化 authoring 一个物理尺度约束。",
+      "narrative_en": "Size handling uses 8 x 8 x 10 cm as the reference target range and applies a uniform scale of 0.04 to preserve proportions; the final authored bbox is about 3.96 x 2.68 x 8 cm. The reference target is a physical-size constraint, not a forced non-uniform stretch."
+    },
+    "orientation": {
+      "source_up_axis": "Y",
+      "output_up_axis": "Z",
+      "rotation_axis": "X",
+      "rotation_degrees": 90.0,
+      "narrative_zh": "朝向处理是把源资产的 Y-up 坐标系转换为输出 Stage 的 Z-up；实现方式是绕 X 轴旋转 90 度。",
+      "narrative_en": "Orientation handling converts the source asset from Y-up to the output stage's Z-up convention, implemented as a 90-degree rotation around the X axis."
+    },
+    "collider": {
+      "approximation": "convexDecomposition",
+      "scope": "per_component",
+      "target_mesh_paths": [
+        "/World/mesh/mesh"
+      ],
+      "proxy_path": "/World/PhysicsProxy/BBoxCollider",
+      "visual_mesh_modified": false
+    },
+    "physics_schema": {
+      "detected": true,
+      "schemas": [
+        "PhysicsCollisionAPI",
+        "PhysicsMassAPI",
+        "PhysicsMeshCollisionAPI",
+        "UsdPhysics.CollisionAPI",
+        "UsdPhysics.MassAPI"
+      ],
+      "narrative_zh": "这里的物理 schema 指写在 USD prim 上、可被仿真工具识别的物理能力声明。本轮资产已包含 PhysicsCollisionAPI, PhysicsMassAPI, PhysicsMeshCollisionAPI, UsdPhysics.CollisionAPI，表示它不再只是视觉 mesh，而是带有碰撞/质量相关信息的静态 SimReady 候选资产。",
+      "narrative_en": "Physics schema means USD prim metadata that simulation tools can recognize. This asset contains PhysicsCollisionAPI, PhysicsMassAPI, PhysicsMeshCollisionAPI, UsdPhysics.CollisionAPI, so it is no longer just visual geometry; it carries collision and mass-related information for a static SimReady candidate."
+    }
+  },
+  "runtime_validation": {
+    "status": "passed",
+    "frames": 240,
+    "checks": {
+      "asset_loaded": true,
+      "static_colliders_applied": true,
+      "dynamic_box_created": true,
+      "simulation_advanced": true,
+      "hit_targeted": true,
+      "size_preserved": true,
+      "contact_report_detected": true,
+      "contact_detected_or_inferred": true,
+      "artifacts_written": true
+    },
+    "contact_evidence": {
+      "status": "detected",
+      "strong_contact_detected": true,
+      "motion_inferred_contact": false,
+      "contact_evidence_level": "detected",
+      "contact_report_present": true,
+      "contact_report": {
+        "enabled": true,
+        "method": "physx_contact_report",
+        "event_count": 15,
+        "target_event_count": 15,
+        "asset_subtree_event_count": 15,
+        "guide_bbox_event_count": 0,
+        "other_box_event_count": 0,
+        "detected": true,
+        "asset_subtree_detected": true,
+        "guide_bbox_detected": false,
+        "guide_bbox_is_pass_evidence": false,
+        "first_target_event": {
+          "frame": 7,
+          "event_type": 0,
+          "actor0": "/World/boxActor",
+          "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+          "collider0": "/World/boxActor",
+          "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+          "num_contacts": 4,
+          "target_kind": "asset_subtree"
+        },
+        "events": [
+          {
+            "frame": 7,
+            "event_type": 0,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 8,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 9,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 10,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 11,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 12,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 13,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 14,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 15,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 16,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 17,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 18,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 19,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 20,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          },
+          {
+            "frame": 21,
+            "event_type": 2,
+            "actor0": "/World/boxActor",
+            "actor1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "collider0": "/World/boxActor",
+            "collider1": "/World/TestAssetSlot/ReferencedAsset/Asset/PhysicsProxy/BBoxCollider",
+            "num_contacts": 4,
+            "target_kind": "asset_subtree"
+          }
+        ],
+        "errors": []
+      },
+      "legacy_without_contact_report": false
+    },
+    "human_summary_zh": [
+      "omni-asset-cli 的 Stage 1 静态校验没有完全通过，主要发现：几何质量提醒（ManifoldChecker=1，WeldChecker=1）。这些问题不会否定本轮自动化写入的价值，但应该进入下一轮自动修正。",
+      "运行时验证完成了 240 帧仿真：资产成功加载，静态碰撞体被应用，动态测试物体创建成功，仿真正常推进，并且资产尺寸在模板场景中保持稳定。",
+      "runtime 证据包含真实 PhysX contact report，测试物体与资产发生了可记录的接触。"
+    ],
+    "human_summary_en": [
+      "The omni-asset-cli Stage 1 static validation did not fully pass. It mainly found geometry-quality findings (ManifoldChecker=1, WeldChecker=1). These findings do not negate the automated authoring result, but they should feed the next automated repair iteration.",
+      "The runtime validation completed 240 simulation frames: the asset loaded, static colliders were applied, the dynamic test object was created, simulation advanced, and the authored asset kept its size in the template scene.",
+      "The runtime artifact includes a real PhysX contact report, confirming recorded contact between the test object and the asset."
+    ]
+  },
+  "downstream_validation": {
+    "status": "warning",
+    "issue_count": 2,
+    "severity_counts": {
+      "WARNING": 2
+    },
+    "rule_counts": {
+      "ManifoldChecker": 1,
+      "WeldChecker": 1
+    }
+  },
+  "issue_summary": {
+    "zh": [
+      "Mesh 层面仍有 2 个几何质量问题，主要影响碰撞稳定性和后续批量自动化可信度。",
+      "SimReady/资产规范层面当前没有被下游静态规则标记的问题。"
+    ],
+    "en": [
+      "The mesh layer still has 2 geometry-quality finding(s), which mainly affect collision stability and batch automation confidence.",
+      "The SimReady/asset-conformance layer has no findings from the downstream static rule set."
+    ]
+  },
+  "data_flywheel": {
+    "zh": [
+      "usd-simready-inspector 先把普通 mesh 转成候选 SimReady USD，并记录 recommendation、authoring 和 inspection 证据。",
+      "omni-asset-cli 在下游按 Stage 1 profile、模板场景、物理命中测试和渲染视频进行验证。",
+      "验证失败项会回流成下一轮规则、代理碰撞体、尺寸先验、材质路径或测试模板改进。",
+      "每一轮都留下 JSON、MD、runtime report 和视频证据，方便客户审计，也方便持续扩大资产批量处理能力。"
+    ],
+    "en": [
+      "usd-simready-inspector turns the ordinary mesh into a candidate SimReady USD and records recommendation, authoring, and inspection evidence.",
+      "omni-asset-cli validates the result downstream with the Stage 1 profile, template scene checks, physics hit tests, and rendered video evidence.",
+      "Failures become feedback for the next iteration: rules, proxy colliders, size priors, material paths, or validation harness changes.",
+      "Every iteration leaves JSON, Markdown, runtime reports, and video artifacts for customer auditability and scalable batch improvement."
+    ]
+  }
+}

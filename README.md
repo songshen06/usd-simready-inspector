@@ -179,6 +179,41 @@ artifacts feed the next data-flywheel iteration. When `ffmpeg` is available,
 HTML; if the video is still above `--max-embed-mb`, the report falls back to a
 relative video link.
 
+For stable customer demos, use the downstream `stage1-runtime` contact evidence
+as the authoritative runtime input. Video is useful for presentation, but the
+report should not depend on video generation succeeding:
+
+```bash
+python3 /home/horde/omni-asset-cli/omni_asset_cli.py stage1-runtime \
+  out/cup.simready_static.usda \
+  --out out/cup_stage1_runtime \
+  --runtime-docker-container isaac-sim \
+  --runtime-docker-preflight auto \
+  --evidence-preset standard \
+  --contact-timeout-seconds 900 \
+  --visual-timeout-seconds 180
+
+.venv/bin/python -B usd_simready_cli.py customer-report \
+  --asset-name cup \
+  --source-usd /path/to/source_mesh.usd \
+  --output-usd out/cup.simready_static.usda \
+  --recommendation out/cup.recommendation.json \
+  --report out/cup.report.json \
+  --omni-validate out/cup.mesh_preflight.json \
+  --runtime-summary out/cup_stage1_runtime/contact_evidence/summary.json \
+  --runtime-report out/cup_stage1_runtime/contact_evidence/runtime_report.json \
+  --proxy-report out/cup.proxy_collider.report.json \
+  --no-embed-video \
+  --output-json out/cup.customer_report.summary.json \
+  --output-zh out/cup.customer_report.zh.html \
+  --output-en out/cup.customer_report.en.html
+```
+
+For a strong runtime result, the downstream summary should contain
+`checks.contact_report_detected == true` and
+`contact_evidence_level == "detected"`. If rendered video times out, keep the
+HTML report focused on the contact JSON evidence and regenerate video later.
+
 For large mesh-heavy assets, prefer binary USD crate output to avoid very large
 ASCII USDA files:
 
@@ -232,6 +267,30 @@ python3 usd_inspector.py asset.usd --pretty --output asset.report.json
 ```bash
 python3 report_to_knowledge_candidate.py asset.report.json --output asset.knowledge_candidate.json
 ```
+
+### 2.1 Build a compact SimReady asset feature database
+
+For the local official SimReady asset tree, generate one compact row per USD
+variant under `common_assets` while preserving full report and knowledge JSON
+evidence:
+
+```bash
+.venv/bin/python build_asset_feature_database.py \
+  --input-root /home/horde/Downloads/Assets/simready_content \
+  --output-dir out/simready_asset_features \
+  --pretty
+```
+
+Outputs:
+
+- `asset_features.csv`: compact searchable feature table.
+- `asset_features.jsonl`: one full `knowledge_candidate` per successful USD.
+- `reports/`: detailed inspector reports, mirroring the source relative paths.
+- `knowledge/`: per-asset `knowledge_candidate.json` files.
+- `failures.csv`: assets that could not be opened or inspected.
+- `summary.json`: counts and output locations.
+
+Use `--limit N` for smoke tests before scanning the full library.
 
 ### 3. Generate a static furniture recommendation
 

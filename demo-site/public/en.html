@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SimReady Asset Conversion Report - cup_demo_20260709</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink:#172026; --muted:#5b6670; --line:#d8dee5; --bg:#f7f9fb; --panel:#ffffff;
+      --green:#0f7b4f; --amber:#a45f00; --red:#b42318; --blue:#1d5f99;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Inter, "Segoe UI", Arial, sans-serif; color:var(--ink); background:var(--bg); }
+    header { padding:44px 48px 24px; background:#ffffff; border-bottom:1px solid var(--line); }
+    main { max-width:1180px; margin:0 auto; padding:28px 24px 48px; }
+    h1 { margin:0; font-size:34px; line-height:1.15; letter-spacing:0; }
+    h2 { margin:0 0 16px; font-size:22px; letter-spacing:0; }
+    h3 { margin:0 0 8px; font-size:16px; letter-spacing:0; }
+    p { line-height:1.58; color:var(--muted); }
+    .sub { margin:8px 0 0; font-size:18px; color:var(--muted); }
+    .topline { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+    .badge { display:inline-flex; align-items:center; border-radius:999px; padding:5px 10px; font-size:13px; font-weight:700; }
+    .passed { color:var(--green); background:#e7f5ee; } .warning { color:var(--amber); background:#fff3dd; }
+    .failed,.blocked { color:var(--red); background:#ffebe8; } .unknown { color:var(--blue); background:#eaf3fb; }
+    .grid { display:grid; grid-template-columns:repeat(12,1fr); gap:18px; }
+    section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:22px; margin-bottom:18px; }
+    .span-7 { grid-column:span 7; } .span-5 { grid-column:span 5; } .span-12 { grid-column:span 12; }
+    .pathrow { display:grid; grid-template-columns:1fr auto 1fr; gap:14px; align-items:center; margin-top:18px; }
+    .pathbox { border:1px solid var(--line); border-radius:8px; padding:14px; background:#fbfcfd; min-width:0; }
+    .pathbox strong { display:block; margin-bottom:6px; } .pathbox code { word-break:break-all; color:var(--muted); }
+    .arrow { font-weight:800; color:var(--blue); }
+    .outcome-table { margin-top:18px; }
+    .outcome-table th:first-child { width:15%; color:var(--ink); }
+    .outcome-table td:nth-child(3) { color:var(--green); }
+    .outcome-table td:last-child { color:var(--muted); line-height:1.45; }
+    .metrics { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+    .metric { border:1px solid var(--line); border-radius:8px; padding:14px; background:#fbfcfd; }
+    .metric-title { font-size:13px; color:var(--muted); margin-bottom:8px; }
+    .metric-primary { font-size:20px; font-weight:800; word-break:break-word; }
+    .metric-secondary { font-size:13px; color:var(--muted); margin-top:6px; word-break:break-word; }
+    ul { margin:0; padding-left:20px; } li { margin:9px 0; line-height:1.45; }
+    details { border:1px solid var(--line); border-radius:8px; background:#fbfcfd; padding:0; margin-bottom:12px; }
+    summary { cursor:pointer; padding:14px 16px; font-weight:800; }
+    details[open] summary { border-bottom:1px solid var(--line); }
+    details ul { padding:8px 22px 16px 36px; }
+    video { width:100%; max-height:520px; background:#0b1117; border-radius:8px; display:block; }
+    table { width:100%; border-collapse:collapse; font-size:14px; } th,td { text-align:left; border-bottom:1px solid var(--line); padding:10px; vertical-align:top; }
+    th { color:var(--muted); font-weight:700; } .empty { color:var(--muted); padding:22px; border:1px dashed var(--line); border-radius:8px; }
+    .foot { text-align:right; color:var(--muted); font-size:12px; margin-top:12px; }
+    @media (max-width: 820px) { header { padding:28px 22px 18px; } h1 { font-size:28px; } .span-7,.span-5,.span-12 { grid-column:span 12; } .metrics { grid-template-columns:1fr; } .pathrow { grid-template-columns:1fr; } .arrow { display:none; } .outcome-table th,.outcome-table td { display:block; width:100%; } .outcome-table tr { display:block; border-bottom:1px solid var(--line); padding:8px 0; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="topline"><span class="badge warning">Attention</span> <span>Asset: <strong>cup_demo_20260709</strong></span></div>
+    <h1>SimReady Asset Conversion Report</h1>
+    <p class="sub">From ordinary mesh to validated SimReady asset</p>
+  </header>
+  <main>
+    <div class="grid">
+      <section class="span-12">
+        <h2>Outcome And Evidence</h2>
+        <p>The input started as a visual mesh. The workflow normalized physical size, corrected orientation, authored collision and physics metadata, and validated the result downstream so the asset can enter simulation, robotics, and synthetic-data pipelines as a SimReady static asset.</p>
+        <div class="pathrow">
+          <div class="pathbox"><strong>Ordinary mesh</strong><code>/home/horde/new_3D/cup.usd</code></div>
+          <div class="arrow">-&gt;</div>
+          <div class="pathbox"><strong>SimReady asset</strong><code>out/cup_demo_20260709.simready.usda</code></div>
+        </div>
+        <table class="outcome-table"><thead><tr><th></th><th>Before</th><th>After</th><th>Explanation</th></tr></thead><tbody><tr><th scope="row">Asset State</th><td>Visual mesh</td><td><strong>SimReady static USD</strong></td><td>The asset moves from render-only geometry to a simulation-ready candidate with physical capability metadata.</td></tr><tr><th scope="row">Physical Size</th><td>Source bbox 98.89 x 200 x 67.05 cm</td><td><strong>Final bbox 3.96 x 2.68 x 8 cm</strong></td><td>8 x 8 x 10 cm is the reference target range. The workflow applies uniform scale 0.04 to preserve proportions instead of stretching axes independently.</td></tr><tr><th scope="row">Coordinate System</th><td>Y-up</td><td><strong>Z-up</strong></td><td>The asset is normalized to the downstream simulation stage convention with a 90-degree rotation around X.</td></tr><tr><th scope="row">Collision And Physics</th><td>Appearance-only model</td><td><strong>Simulation-ready collision behavior</strong></td><td>The workflow adds the physical properties needed for downstream tools to treat the asset as an object that can participate in simulation, not just a model to view.</td></tr><tr><th scope="row">Downstream Validation</th><td>No automated validation record</td><td><strong>240 simulation frames completed</strong></td><td>The test scene confirmed that the asset can participate in physical collision.</td></tr></tbody></table>
+      </section>
+      <section class="span-12">
+        <h2>View Technical Details</h2>
+        <details>
+          <summary>What The Workflow Did</summary>
+          <ul><li>Asset identification: classified as decor and compared with 36 similar reference assets for sizing and collision strategy.</li><li>Size handling uses 8 x 8 x 10 cm as the reference target range and applies a uniform scale of 0.04 to preserve proportions; the final authored bbox is about 3.96 x 2.68 x 8 cm. The reference target is a physical-size constraint, not a forced non-uniform stretch.</li><li>Orientation handling converts the source asset from Y-up to the output stage&#x27;s Z-up convention, implemented as a 90-degree rotation around the X axis.</li><li>Collision handling: authored convexDecomposition collision approximation on the target mesh, scope=per_component, so downstream physics tests can load it.</li><li>After adding collision and physical properties, downstream tools can load the asset as an object that participates in simulation, not just as appearance-only geometry.</li><li>Used downstream mesh-defect feedback to author a lightweight Physics Proxy Collider at /World/PhysicsProxy/BBoxCollider, while preserving the visual mesh.</li></ul>
+        </details>
+        <details>
+          <summary>Tests And Validation</summary>
+          <ul><li>The omni-asset-cli Stage 1 static validation did not fully pass. It mainly found geometry-quality findings (ManifoldChecker=1, WeldChecker=1). These findings do not negate the automated authoring result, but they should feed the next automated repair iteration.</li><li>The runtime validation completed 240 simulation frames: the asset loaded, static colliders were applied, the dynamic test object was created, simulation advanced, and the authored asset kept its size in the template scene.</li><li>The runtime artifact includes a real PhysX contact report, confirming recorded contact between the test object and the asset.</li></ul>
+        </details>
+      </section>
+      <section class="span-12">
+        <h2>Validation Video Evidence</h2>
+        <div class="empty">No validation video was provided.</div>
+        <p></p>
+      </section>
+    </div>
+    <div class="foot">Generated: 2026-07-09 08:53 UTC</div>
+  </main>
+</body>
+</html>

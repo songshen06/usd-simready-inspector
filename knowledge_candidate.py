@@ -290,8 +290,14 @@ def build_component_map(report: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     subsets = materials.get("subsets", []) or []
     bindings = materials.get("bindings", []) or []
+    render_materials = materials.get("render_materials", []) or []
     collider_entries = physics.get("colliders", []) or []
     physics_material_bindings = materials.get("physics_material_bindings", []) or []
+    render_material_by_path = {
+        item.get("path"): item
+        for item in render_materials
+        if item.get("path")
+    }
 
     result: List[Dict[str, Any]] = []
     for mesh in geometry.get("mesh_prims", []) or []:
@@ -304,7 +310,11 @@ def build_component_map(report: Dict[str, Any]) -> List[Dict[str, Any]]:
             {
                 item.get("material_path")
                 for item in bindings
-                if item.get("target_prim") == mesh_path and not item.get("whether_on_subset")
+                if (
+                    item.get("target_prim") == mesh_path
+                    and not item.get("whether_on_subset")
+                    and "physics" not in str(item.get("binding_purpose") or "").lower()
+                )
             }
         )
         subset_materials = sorted(
@@ -340,6 +350,17 @@ def build_component_map(report: Dict[str, Any]) -> List[Dict[str, Any]]:
                     parts.append(f"{key}={item.get(key)}")
             if parts:
                 physics_material_param_summary.append(",".join(parts))
+        visual_material_params = []
+        for material_path in direct_materials + subset_materials:
+            material = render_material_by_path.get(material_path) or {}
+            preview_surface = material.get("pbr", {}) or material.get("preview_surface", {}) or {}
+            if preview_surface:
+                visual_material_params.append(
+                    {
+                        "material_path": material_path,
+                        **preview_surface,
+                    }
+                )
         result.append(
             {
                 "mesh_path": mesh_path,
@@ -347,6 +368,7 @@ def build_component_map(report: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "mesh_role": mesh_role,
                 "render_materials": direct_materials,
                 "subset_materials": subset_materials,
+                "visual_material_params": visual_material_params,
                 "has_collider": bool(matching_colliders),
                 "collider_schema": collider_schema,
                 "collider_approximation": collider_approximation,
@@ -364,6 +386,112 @@ def build_component_map(report: Dict[str, Any]) -> List[Dict[str, Any]]:
             }
         )
     return result
+
+
+def extract_material_features(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize visual and physics material facts for feature storage."""
+    materials = report.get("materials", {}) or {}
+    bindings = materials.get("bindings", []) or []
+    render_materials = materials.get("render_materials", []) or []
+    physics_materials = materials.get("physics_materials", []) or []
+    physics_material_bindings = materials.get("physics_material_bindings", []) or []
+
+    bound_prims_by_material: Dict[str, List[str]] = {}
+    physics_bound_prims_by_material: Dict[str, List[str]] = {}
+    for binding in bindings:
+        material_path = binding.get("material_path")
+        target_prim = binding.get("target_prim")
+        if not material_path or not target_prim:
+            continue
+        purpose = str(binding.get("binding_purpose") or "")
+        if "physics" in purpose.lower():
+            physics_bound_prims_by_material.setdefault(material_path, []).append(target_prim)
+        else:
+            bound_prims_by_material.setdefault(material_path, []).append(target_prim)
+
+    visual_records = []
+    for item in render_materials:
+        material_path = item.get("path")
+        preview_surface = item.get("preview_surface", {}) or {}
+        pbr = item.get("pbr", {}) or preview_surface
+        texture_paths = sorted(
+            {
+                str(value)
+                for shader in item.get("shaders", []) or []
+                for key, value in (shader.get("inputs", {}) or {}).items()
+                if "texture" in str(key).lower() and value
+            }
+        )
+        visual_records.append(
+            {
+                "material_path": material_path,
+                "name": item.get("name"),
+                "outputs": item.get("outputs", []),
+                "base_material": item.get("base_material"),
+                "shader_count": len(item.get("shaders", []) or []),
+                "shader_ids": sorted(
+                    {
+                        str(shader.get("shader_id"))
+                        for shader in item.get("shaders", []) or []
+                        if shader.get("shader_id")
+                    }
+                ),
+                "preview_surface": preview_surface,
+                "pbr": pbr,
+                "has_texture": bool(texture_paths),
+                "texture_paths": texture_paths,
+                "bound_prims": sorted(set(bound_prims_by_material.get(material_path, []))),
+            }
+        )
+
+    physics_records = []
+    physics_material_by_path = {
+        item.get("path"): item
+        for item in physics_materials
+        if item.get("path")
+    }
+    for item in physics_materials:
+        material_path = item.get("path")
+        physics_records.append(
+            {
+                "material_path": material_path,
+                "name": item.get("name"),
+                "type_name": item.get("type_name"),
+                "applied_schemas": item.get("applied_schemas", []),
+                "static_friction": item.get("static_friction"),
+                "dynamic_friction": item.get("dynamic_friction"),
+                "restitution": item.get("restitution"),
+                "density": item.get("density"),
+                "bound_prims": sorted(set(physics_bound_prims_by_material.get(material_path, []))),
+            }
+        )
+
+    binding_records = []
+    for item in physics_material_bindings:
+        physics_material_path = item.get("physics_material_path") or item.get("material_path")
+        physics_material = physics_material_by_path.get(physics_material_path, {})
+        binding_records.append(
+            {
+                "target_prim": item.get("target_prim"),
+                "material_path": item.get("material_path"),
+                "physics_material_path": physics_material_path,
+                "binding_purpose": item.get("binding_purpose"),
+                "relationship_name": item.get("relationship_name"),
+                "static_friction": item.get("static_friction", physics_material.get("static_friction")),
+                "dynamic_friction": item.get("dynamic_friction", physics_material.get("dynamic_friction")),
+                "restitution": item.get("restitution", physics_material.get("restitution")),
+                "density": item.get("density", physics_material.get("density")),
+            }
+        )
+
+    return {
+        "visual_materials": visual_records,
+        "physics_materials": physics_records,
+        "physics_bindings": binding_records,
+        "render_material_count": len(visual_records),
+        "physics_material_count": len(physics_records),
+        "physics_binding_count": len(binding_records),
+    }
 
 
 def extract_geometry_features(report: Dict[str, Any]) -> Dict[str, Any]:
@@ -512,6 +640,7 @@ def extract_physics_values(report: Dict[str, Any]) -> Dict[str, Any]:
         params = {
             "target_prim": item.get("target_prim"),
             "material_path": item.get("material_path"),
+            "physics_material_path": item.get("physics_material_path") or item.get("material_path"),
             "binding_purpose": item.get("binding_purpose"),
             "static_friction": item.get("static_friction"),
             "dynamic_friction": item.get("dynamic_friction"),
@@ -954,6 +1083,7 @@ def build_knowledge_candidate(report: Dict[str, Any], variant_role_override: Opt
     material_family_candidates = infer_material_family_candidates(report)
     structure_pattern = extract_structure_pattern(report)
     component_map = build_component_map(report)
+    material_features = extract_material_features(report)
     geometry_features = extract_geometry_features(report)
     physics_values = extract_physics_values(report)
     collider_recommendation = infer_collider_recommendation(report, geometry_features)
@@ -970,6 +1100,7 @@ def build_knowledge_candidate(report: Dict[str, Any], variant_role_override: Opt
         "material_family_candidates": material_family_candidates,
         "structure_pattern": structure_pattern,
         "component_map": component_map,
+        "material_features": material_features,
         "geometry_features": geometry_features,
         "physics_values": physics_values,
         "collider_recommendation": collider_recommendation,

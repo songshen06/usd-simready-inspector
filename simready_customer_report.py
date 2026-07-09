@@ -352,6 +352,40 @@ def _physics_schema_narrative(schemas: List[str], lang: str) -> str:
     )
 
 
+def _contact_evidence(runtime: Dict[str, Any], runtime_report: Dict[str, Any]) -> Dict[str, Any]:
+    checks = runtime.get("checks") or {}
+    report_contact = _dig(runtime_report, "final_state", "contact_report", default=None)
+    hit_analysis = runtime_report.get("hit_analysis") or {}
+    level = runtime.get("contact_evidence_level") or hit_analysis.get("contact_evidence_level")
+    has_contact_report = isinstance(report_contact, dict)
+    strong_detected = bool(checks.get("contact_report_detected")) or bool(
+        has_contact_report and report_contact.get("detected")
+    )
+    inferred = bool(checks.get("contact_detected_or_inferred")) and not strong_detected
+    legacy_without_contact_report = (
+        not has_contact_report
+        and "contact_report_detected" not in checks
+        and "contact_evidence_level" not in runtime
+    )
+    if strong_detected:
+        status = "detected"
+    elif inferred:
+        status = "inferred"
+    elif legacy_without_contact_report:
+        status = "missing_contact_report"
+    else:
+        status = "none"
+    return {
+        "status": status,
+        "strong_contact_detected": bool(strong_detected and level in {None, "detected"}),
+        "motion_inferred_contact": inferred,
+        "contact_evidence_level": level,
+        "contact_report_present": has_contact_report,
+        "contact_report": report_contact if has_contact_report else None,
+        "legacy_without_contact_report": legacy_without_contact_report,
+    }
+
+
 def _build_report_model(inputs: ReportInputs) -> Dict[str, Any]:
     rec = inputs.recommendation
     report = inputs.inspection_report
@@ -383,6 +417,7 @@ def _build_report_model(inputs: ReportInputs) -> Dict[str, Any]:
 
     grouped = _group_issues(omni)
     runtime_status = _status_key(runtime.get("result"), runtime.get("status"))
+    contact_evidence = _contact_evidence(runtime, inputs.runtime_report)
     omni_status = _status_key(omni.get("validation_status"), omni.get("status"))
     if omni_status == "unknown":
         omni_status = _status_key(omni.get("execution_status"))
@@ -447,6 +482,7 @@ def _build_report_model(inputs: ReportInputs) -> Dict[str, Any]:
             "status": runtime_status,
             "frames": runtime.get("frames"),
             "checks": checks,
+            "contact_evidence": contact_evidence,
             "human_summary_zh": _validation_items(inputs, "zh"),
             "human_summary_en": _validation_items(inputs, "en"),
         },
@@ -558,7 +594,9 @@ def _metric_cards(model: Dict[str, Any], labels: Dict[str, str], lang: str) -> s
     issue_count = downstream.get("issue_count") or 0
     static_status = "passed" if issue_count == 0 else "warning"
     runtime_status = runtime.get("status") or "unknown"
-    contact = _dig(runtime, "checks", "contact_detected_or_inferred", default=None)
+    contact_evidence = runtime.get("contact_evidence") or {}
+    strong_contact = bool(contact_evidence.get("strong_contact_detected"))
+    inferred_contact = bool(contact_evidence.get("motion_inferred_contact"))
     if lang == "zh":
         asset_secondary = "普通视觉网格已转为静态仿真候选资产"
         scale_secondary = f"统一缩放={_fmt_number(scale.get('applied_uniform_scale'))}"
@@ -567,7 +605,7 @@ def _metric_cards(model: Dict[str, Any], labels: Dict[str, str], lang: str) -> s
         static_primary = "仍需迭代" if issue_count else "通过"
         static_secondary = f"{issue_count} 个下游静态校验项"
         runtime_primary = f"{runtime.get('frames') or 'n/a'} 帧完成" if runtime_status == "passed" else runtime_status
-        runtime_secondary = "接触证据待增强" if contact is False else ("接触已确认" if contact is True else "runtime evidence")
+        runtime_secondary = "接触已确认" if strong_contact else ("仅运动推断" if inferred_contact else "真实接触证据缺失")
     else:
         asset_secondary = "Visual geometry converted into a static simulation candidate"
         scale_secondary = f"uniform scale={_fmt_number(scale.get('applied_uniform_scale'))}"
@@ -576,7 +614,7 @@ def _metric_cards(model: Dict[str, Any], labels: Dict[str, str], lang: str) -> s
         static_primary = "Needs iteration" if issue_count else "Passed"
         static_secondary = f"{issue_count} downstream static finding(s)"
         runtime_primary = f"{runtime.get('frames') or 'n/a'} frames completed" if runtime_status == "passed" else runtime_status
-        runtime_secondary = "contact evidence pending" if contact is False else ("contact confirmed" if contact is True else "runtime evidence")
+        runtime_secondary = "contact confirmed" if strong_contact else ("motion-inferred only" if inferred_contact else "contact report missing")
     cards = [
         (labels["metric_asset_state"], "Mesh -> SimReady USD", asset_secondary, "passed"),
         (labels["metric_scale"], final_bbox, scale_secondary, "passed" if scale.get("applied_uniform_scale") else "warning"),
@@ -610,7 +648,9 @@ def _outcome_rows(model: Dict[str, Any], labels: Dict[str, str], lang: str) -> s
     output_up = orientation.get("output_up_axis") or "n/a"
     issue_count = downstream.get("issue_count") or 0
     frames = runtime.get("frames") or "n/a"
-    contact = _dig(runtime, "checks", "contact_detected_or_inferred", default=None)
+    contact_evidence = runtime.get("contact_evidence") or {}
+    strong_contact = bool(contact_evidence.get("strong_contact_detected"))
+    inferred_contact = bool(contact_evidence.get("motion_inferred_contact"))
 
     if lang == "zh":
         rows = [
@@ -645,9 +685,11 @@ def _outcome_rows(model: Dict[str, Any], labels: Dict[str, str], lang: str) -> s
                 "资产已在测试场景中成功加载并保持尺寸稳定；下一轮会继续增强碰撞接触的自动确认能力。",
             ),
         ]
-        if contact is True:
+        if strong_contact:
             rows[-1] = (rows[-1][0], rows[-1][1], rows[-1][2], "测试场景已确认资产可以参与物理碰撞。")
-        elif contact is False:
+        elif inferred_contact:
+            rows[-1] = (rows[-1][0], rows[-1][1], rows[-1][2], "测试物体运动到目标区域，但本次 artifact 没有真实 PhysX 接触记录；需要用标准 contact evidence 重新生成验证包。")
+        else:
             rows[-1] = (rows[-1][0], rows[-1][1], rows[-1][2], "资产已成功完成仿真加载和稳定性验证；下一轮会继续增强碰撞接触的自动确认能力。")
     else:
         rows = [
@@ -682,9 +724,11 @@ def _outcome_rows(model: Dict[str, Any], labels: Dict[str, str], lang: str) -> s
                 "The asset loaded successfully in a test scene and kept a stable size. The next iteration will further strengthen automatic confirmation of collision contact.",
             ),
         ]
-        if contact is True:
+        if strong_contact:
             rows[-1] = (rows[-1][0], rows[-1][1], rows[-1][2], "The test scene confirmed that the asset can participate in physical collision.")
-        elif contact is False:
+        elif inferred_contact:
+            rows[-1] = (rows[-1][0], rows[-1][1], rows[-1][2], "The test object reached the target area, but this artifact does not include a real PhysX contact record. Regenerate the standard contact-evidence bundle.")
+        else:
             rows[-1] = (rows[-1][0], rows[-1][1], rows[-1][2], "The asset completed simulation loading and stability checks. The next iteration will further strengthen automatic confirmation of collision contact.")
 
     html_rows = []
@@ -732,10 +776,11 @@ def _validation_items(inputs: ReportInputs, lang: str) -> List[str]:
     issue_count = int(_dig(omni, "summary", "issue_count", default=0) or 0)
     severity_counts = _dig(omni, "summary", "severity_counts", default={}) or {}
     rule_counts = _dig(omni, "summary", "rule_counts", default={}) or {}
-    checks = runtime.get("checks") or {}
     frames = runtime.get("frames") or _dig(inputs.runtime_report, "frames", default="n/a")
     runtime_passed = _status_key(runtime.get("result"), runtime.get("status")) == "passed"
-    contact = checks.get("contact_detected_or_inferred")
+    contact_evidence = _contact_evidence(runtime, inputs.runtime_report)
+    strong_contact = bool(contact_evidence.get("strong_contact_detected"))
+    inferred_contact = bool(contact_evidence.get("motion_inferred_contact"))
 
     if lang == "zh":
         items: List[str] = []
@@ -754,7 +799,7 @@ def _validation_items(inputs: ReportInputs, lang: str) -> List[str]:
             detail_text = "，".join(detail) if detail else f"{issue_count} 个校验项"
             items.append(
                 "omni-asset-cli 的 Stage 1 静态校验没有完全通过，主要发现"
-                f" {detail_text}。这些问题不会否定本轮自动化写入的价值，但应该进入下一轮自动修正。"
+                f"：{detail_text}。这些问题不会否定本轮自动化写入的价值，但应该进入下一轮自动修正。"
             )
         elif omni:
             items.append("omni-asset-cli 的 Stage 1 静态校验未发现阻塞问题，资产结构满足当前规则集。")
@@ -769,12 +814,19 @@ def _validation_items(inputs: ReportInputs, lang: str) -> List[str]:
                 "运行时验证未完全通过，说明当前资产或测试模板还需要继续调整；相关 artifacts 已保留用于定位问题。"
             )
 
-        if contact is False:
+        if strong_contact:
+            items.append("runtime 证据包含真实 PhysX contact report，测试物体与资产发生了可记录的接触。")
+        elif inferred_contact:
             items.append(
-                "本轮已经证明资产可以被测试场景加载并稳定运行；下一轮会继续增强碰撞接触是否发生的自动确认能力。"
+                "runtime 运动轨迹显示测试物体到达目标区域，但本次 artifact 没有真实 PhysX contact report；"
+                "客户版报告只把它作为运动推断，不作为强接触证明。"
             )
-        elif contact is True:
-            items.append("runtime 证据显示测试物体与资产发生了接触或可推断接触，说明 authored collider 已参与物理测试。")
+        elif contact_evidence.get("legacy_without_contact_report"):
+            items.append(
+                "本轮 artifact 来自旧 runtime 输出，缺少 contact report 字段；它只能证明加载、仿真推进和尺寸稳定，不能证明真实接触已发生。"
+            )
+        else:
+            items.append("本轮已经证明资产可以被测试场景加载并稳定运行；真实接触证据仍需补充。")
 
         if not items:
             items.append("当前报告未提供完整的下游验证结果；建议补充 omni-asset-cli validate 和 runtime evidence 后再对外展示。")
@@ -811,12 +863,19 @@ def _validation_items(inputs: ReportInputs, lang: str) -> List[str]:
             "The runtime validation did not fully pass, so the asset or test harness still needs adjustment. The generated artifacts are retained for debugging."
         )
 
-    if contact is False:
+    if strong_contact:
+        items.append("The runtime artifact includes a real PhysX contact report, confirming recorded contact between the test object and the asset.")
+    elif inferred_contact:
         items.append(
-            "This run proves that the asset can load and stay stable in the test scene. The next iteration will further strengthen automatic confirmation of collision contact."
+            "The runtime trajectory shows that the test object reached the target area, but this artifact does not include a real PhysX contact report. "
+            "The customer report treats it as motion inference, not strong contact proof."
         )
-    elif contact is True:
-        items.append("Runtime evidence shows detected or inferred contact, which means the authored collider participated in the physics test.")
+    elif contact_evidence.get("legacy_without_contact_report"):
+        items.append(
+            "This artifact was generated by an older runtime output shape without contact-report fields. It proves loading, simulation progress, and size stability, but not recorded physical contact."
+        )
+    else:
+        items.append("This run proves that the asset can load and stay stable in the test scene. Real contact evidence still needs to be added.")
 
     if not items:
         items.append("This report does not yet include complete downstream validation evidence; add omni-asset-cli validation and runtime artifacts before customer review.")

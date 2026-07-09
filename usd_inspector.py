@@ -638,6 +638,123 @@ def _collect_material_relationship_bindings(prim: Usd.Prim, whether_on_subset: b
     return bindings
 
 
+def _collect_shader_inputs(shader: UsdShade.Shader) -> Dict[str, Any]:
+    inputs: Dict[str, Any] = {}
+    try:
+        shader_inputs = shader.GetInputs()
+    except Exception:
+        shader_inputs = []
+    for shader_input in shader_inputs:
+        try:
+            base_name = shader_input.GetBaseName()
+        except Exception:
+            continue
+        inputs[str(base_name)] = _get_authored_attr_value(shader_input.GetAttr())
+    return inputs
+
+
+def _collect_material_shader_network(material_prim: Usd.Prim) -> List[Dict[str, Any]]:
+    shaders: List[Dict[str, Any]] = []
+    for prim in Usd.PrimRange(material_prim):
+        try:
+            if not prim.IsA(UsdShade.Shader):
+                continue
+        except Exception:
+            continue
+        shader = UsdShade.Shader(prim)
+        shader_id = None
+        try:
+            shader_id = _get_authored_attr_value(shader.GetIdAttr())
+        except Exception:
+            shader_id = None
+        shaders.append(
+            {
+                "path": prim.GetPath().pathString,
+                "name": prim.GetName(),
+                "shader_id": shader_id,
+                "inputs": _collect_shader_inputs(shader),
+            }
+        )
+    return shaders
+
+
+def _summarize_preview_surface(shaders: List[Dict[str, Any]]) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {}
+    for shader in shaders:
+        if shader.get("shader_id") != "UsdPreviewSurface":
+            continue
+        inputs = shader.get("inputs", {}) or {}
+        for source, target in (
+            ("diffuseColor", "diffuse_color"),
+            ("roughness", "roughness"),
+            ("metallic", "metallic"),
+            ("opacity", "opacity"),
+            ("emissiveColor", "emissive_color"),
+        ):
+            if inputs.get(source) is not None:
+                summary[target] = inputs.get(source)
+        summary["shader_path"] = shader.get("path")
+        break
+    return summary
+
+
+def _summarize_pbr_material(shaders: List[Dict[str, Any]]) -> Dict[str, Any]:
+    summary = _summarize_preview_surface(shaders)
+    if summary:
+        summary["source"] = "UsdPreviewSurface"
+        return summary
+    for shader in shaders:
+        inputs = shader.get("inputs", {}) or {}
+        mapped: Dict[str, Any] = {}
+        for source, target in (
+            ("base_color_factor", "diffuse_color"),
+            ("diffuseColor", "diffuse_color"),
+            ("roughness_factor", "roughness"),
+            ("roughness", "roughness"),
+            ("metallic_factor", "metallic"),
+            ("metallic", "metallic"),
+            ("base_alpha", "opacity"),
+            ("opacity", "opacity"),
+            ("base_color_texture", "base_color_texture"),
+            ("metallic_roughness_texture", "metallic_roughness_texture"),
+        ):
+            if inputs.get(source) is not None:
+                mapped[target] = inputs.get(source)
+        if mapped:
+            mapped["shader_path"] = shader.get("path")
+            mapped["shader_id"] = shader.get("shader_id")
+            mapped["source"] = "shader_inputs"
+            return mapped
+    return {}
+
+
+def _collect_physics_material_params(prim: Usd.Prim) -> Dict[str, Any]:
+    params = {
+        "static_friction": _get_authored_attr_value(prim.GetAttribute("physics:staticFriction")),
+        "dynamic_friction": _get_authored_attr_value(prim.GetAttribute("physics:dynamicFriction")),
+        "restitution": _get_authored_attr_value(prim.GetAttribute("physics:restitution")),
+        "density": _get_authored_attr_value(prim.GetAttribute("physics:density")),
+    }
+    return params
+
+
+def _has_physics_material_signal(prim: Usd.Prim, params: Dict[str, Any]) -> bool:
+    if any(value is not None for value in params.values()):
+        return True
+    type_name = str(prim.GetTypeName() or "")
+    if "PhysicsMaterial" in type_name:
+        return True
+    return any("PhysicsMaterialAPI" in name or "MaterialAPI" in name for name in _get_applied_schema_names(prim))
+
+
+def _descendant_physics_materials(material_path: str, physics_materials: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    prefix = material_path.rstrip("/") + "/"
+    return [
+        item for item in physics_materials
+        if item.get("path") == material_path or str(item.get("path") or "").startswith(prefix)
+    ]
+
+
 def inspect_materials(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
     """Inspect UsdShade materials, bindings, and geom subset assignments."""
     material_prims: List[Dict[str, Any]] = []
@@ -645,6 +762,7 @@ def inspect_materials(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
     subsets: List[Dict[str, Any]] = []
     render_materials: List[Dict[str, Any]] = []
     physics_material_bindings: List[Dict[str, Any]] = []
+    physics_materials: List[Dict[str, Any]] = []
 
     for prim in _iter_prims(stage, max_prims=max_prims):
         try:
@@ -659,12 +777,18 @@ def inspect_materials(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
                 outputs = [output.GetBaseName() for output in material.GetOutputs()]
             except Exception:
                 outputs = []
+            shader_network = _collect_material_shader_network(prim)
+            preview_surface = _summarize_preview_surface(shader_network)
+            pbr_summary = _summarize_pbr_material(shader_network)
 
             material_info = {
                 "path": prim.GetPath().pathString,
                 "name": prim.GetName(),
                 "outputs": outputs,
                 "base_material": None,
+                "shaders": shader_network,
+                "preview_surface": preview_surface,
+                "pbr": pbr_summary,
             }
             try:
                 base_material, _ = material.GetBaseMaterial()
@@ -675,6 +799,18 @@ def inspect_materials(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
 
             material_prims.append(material_info)
             render_materials.append(material_info)
+
+        physics_params = _collect_physics_material_params(prim)
+        if _has_physics_material_signal(prim, physics_params):
+            physics_materials.append(
+                {
+                    "path": prim.GetPath().pathString,
+                    "name": prim.GetName(),
+                    "type_name": str(prim.GetTypeName() or ""),
+                    "applied_schemas": _get_applied_schema_names(prim),
+                    **physics_params,
+                }
+            )
 
         bindings.extend(_collect_material_relationship_bindings(prim, whether_on_subset=prim.IsA(UsdGeom.Subset)))
 
@@ -712,6 +848,15 @@ def inspect_materials(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
     for binding in bindings:
         purpose = binding.get("binding_purpose")
         if purpose and "physics" in purpose.lower():
+            material_path = binding.get("material_path")
+            matching_materials = _descendant_physics_materials(str(material_path or ""), physics_materials) if material_path else []
+            if matching_materials:
+                selected = matching_materials[0]
+                for key in ("static_friction", "dynamic_friction", "restitution", "density"):
+                    binding[key] = selected.get(key)
+                binding["physics_material_path"] = selected.get("path")
+            else:
+                binding["physics_material_path"] = material_path
             physics_material_bindings.append(binding)
 
     return {
@@ -719,6 +864,7 @@ def inspect_materials(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
         "bindings": bindings,
         "subsets": subsets,
         "render_materials": render_materials,
+        "physics_materials": physics_materials,
         "physics_material_bindings": physics_material_bindings,
         "material_family_candidates": [],
     }
