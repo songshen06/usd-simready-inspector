@@ -931,6 +931,8 @@ def build_parser() -> argparse.ArgumentParser:
     customer_report_parser.add_argument("--proxy-report", help="Optional proxy collider / mesh repair report JSON")
     customer_report_parser.add_argument("--video", help="Validation video path, usually compressed mp4")
     customer_report_parser.add_argument("--compressed-video", help="Pre-compressed validation video path")
+    customer_report_parser.add_argument("--internal-video", help="Internal engineering evidence video path, usually with debug overlays")
+    customer_report_parser.add_argument("--internal-compressed-video", help="Pre-compressed internal engineering evidence video path")
     customer_report_parser.add_argument(
         "--compress-video",
         action="store_true",

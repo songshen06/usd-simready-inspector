@@ -1,14 +1,36 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-09T09:33:24.832362+00:00",
+  "generated_at": "2026-07-09T09:57:56.003004+00:00",
   "asset": {
-    "asset_name": "cup_demo_20260709_no_video_until_retry",
+    "asset_name": "cup_demo_20260709_with_cup_drop_evidence",
     "source_usd": "/home/horde/new_3D/cup.usd",
     "output_usd": "out/cup_demo_20260709.simready.usda",
     "state_transition": {
       "from": "ordinary_mesh",
       "to": "simready_static_usd"
     }
+  },
+  "video_evidence": {
+    "notice_zh": "说明：以下视频来自历史成功运行的 cup drop test，可作为当前报告的参考证据；当前 CUDA 容器异常导致本轮未重新生成同等视频，需在 GPU 可见性修复后重新跑标准流程以刷新证据。",
+    "notice_en": "Note: the videos below come from a historical successful cup drop test and are used as reference evidence for this report. The current CUDA container issue prevented regenerating an equivalent video in this run; rerun the standard workflow after GPU visibility is fixed to refresh the evidence.",
+    "items": [
+      {
+        "role": "primary_customer",
+        "path": "/home/horde/omni-asset-cli/out/video_cup_table_drop_material_720p_3s_physical_20260526/cup_drop_material_720p_3s_physical.mp4",
+        "source_path": "/home/horde/omni-asset-cli/out/video_cup_table_drop_material_720p_3s_physical_20260526/cup_drop_material_720p_3s_physical.mp4",
+        "compressed_path": null,
+        "exists": true,
+        "size_bytes": 134292
+      },
+      {
+        "role": "internal_engineering",
+        "path": "/home/horde/omni-asset-cli/out/video_cup_table_drop_bbox_com_low_side_left_up_720p_3s_physical_20260526/cup_drop_bbox_com_low_side_left_up_720p_3s_physical.mp4",
+        "source_path": "/home/horde/omni-asset-cli/out/video_cup_table_drop_bbox_com_low_side_left_up_720p_3s_physical_20260526/cup_drop_bbox_com_low_side_left_up_720p_3s_physical.mp4",
+        "compressed_path": null,
+        "exists": true,
+        "size_bytes": 203557
+      }
+    ]
   },
   "source_assessment": {
     "mesh_layer": {
@@ -32,9 +54,31 @@
       ]
     },
     "simready_layer": {
-      "status": "passed",
-      "issue_count": 0,
-      "issues": []
+      "status": "needs_iteration",
+      "issue_count": 3,
+      "issues": [
+        {
+          "severity": "FAILURE",
+          "rule": "MaterialPathChecker",
+          "code": "VM.MDL.001",
+          "message": "Relative path gltf/pbr.mdl should be corrected to ./gltf/pbr.mdl.",
+          "at": "Attribute (info:mdl:sourceAsset) Prim </World/Looks/Material_0/Material_0>"
+        },
+        {
+          "severity": "FAILURE",
+          "rule": "MaterialPathChecker",
+          "code": "VM.MDL.001",
+          "message": "Relative path gltf/pbr.mdl should be corrected to ./gltf/pbr.mdl.",
+          "at": "Attribute (info:mdl:sourceAsset) Prim </World/Looks/Material_0/baseColorTex>"
+        },
+        {
+          "severity": "FAILURE",
+          "rule": "MaterialPathChecker",
+          "code": "VM.MDL.001",
+          "message": "Relative path gltf/pbr.mdl should be corrected to ./gltf/pbr.mdl.",
+          "at": "Attribute (info:mdl:sourceAsset) Prim </World/Looks/Material_0/metallicRoughnessTex>"
+        }
+      ]
     },
     "other_layer": {
       "status": "passed",
@@ -42,11 +86,13 @@
       "issues": []
     },
     "raw_validator_summary": {
-      "issue_count": 2,
+      "issue_count": 5,
       "severity_counts": {
+        "FAILURE": 3,
         "WARNING": 2
       },
       "rule_counts": {
+        "MaterialPathChecker": 3,
         "ManifoldChecker": 1,
         "WeldChecker": 1
       }
@@ -302,23 +348,25 @@
       "legacy_without_contact_report": false
     },
     "human_summary_zh": [
-      "omni-asset-cli 的 Stage 1 静态校验没有完全通过，主要发现：几何质量提醒（ManifoldChecker=1，WeldChecker=1）。这些问题不会否定本轮自动化写入的价值，但应该进入下一轮自动修正。",
+      "omni-asset-cli 的 Stage 1 静态校验没有完全通过，主要发现：3 个材质路径规范项，几何质量提醒（ManifoldChecker=1，WeldChecker=1）。这些问题不会否定本轮自动化写入的价值，但应该进入下一轮自动修正。",
       "运行时验证完成了 240 帧仿真：资产成功加载，静态碰撞体被应用，动态测试物体创建成功，仿真正常推进，并且资产尺寸在模板场景中保持稳定。",
       "runtime 证据包含真实 PhysX contact report，测试物体与资产发生了可记录的接触。"
     ],
     "human_summary_en": [
-      "The omni-asset-cli Stage 1 static validation did not fully pass. It mainly found geometry-quality findings (ManifoldChecker=1, WeldChecker=1). These findings do not negate the automated authoring result, but they should feed the next automated repair iteration.",
+      "The omni-asset-cli Stage 1 static validation did not fully pass. It mainly found 3 material-path conformance findings, geometry-quality findings (ManifoldChecker=1, WeldChecker=1). These findings do not negate the automated authoring result, but they should feed the next automated repair iteration.",
       "The runtime validation completed 240 simulation frames: the asset loaded, static colliders were applied, the dynamic test object was created, simulation advanced, and the authored asset kept its size in the template scene.",
       "The runtime artifact includes a real PhysX contact report, confirming recorded contact between the test object and the asset."
     ]
   },
   "downstream_validation": {
-    "status": "warning",
-    "issue_count": 2,
+    "status": "failed",
+    "issue_count": 5,
     "severity_counts": {
+      "FAILURE": 3,
       "WARNING": 2
     },
     "rule_counts": {
+      "MaterialPathChecker": 3,
       "ManifoldChecker": 1,
       "WeldChecker": 1
     }
@@ -326,11 +374,11 @@
   "issue_summary": {
     "zh": [
       "Mesh 层面仍有 2 个几何质量问题，主要影响碰撞稳定性和后续批量自动化可信度。",
-      "SimReady/资产规范层面当前没有被下游静态规则标记的问题。"
+      "SimReady/资产规范层面仍有 3 个问题，优先处理材质路径、Stage 元数据或引用规范。"
     ],
     "en": [
       "The mesh layer still has 2 geometry-quality finding(s), which mainly affect collision stability and batch automation confidence.",
-      "The SimReady/asset-conformance layer has no findings from the downstream static rule set."
+      "The SimReady/asset-conformance layer still has 3 finding(s), mainly around material paths, stage metadata, or reference hygiene."
     ]
   },
   "data_flywheel": {

@@ -26,6 +26,11 @@ LANG = {
         "validation": "检测与验证",
         "flywheel": "数据飞轮",
         "evidence": "检测视频证据",
+        "primary_video": "客户可读验证视频",
+        "internal_video": "内部技术证据视频",
+        "primary_video_desc": "杯子在测试场景中下落并落到桌面，用于向客户展示资产已经进入可运行的物理验证流程。",
+        "internal_video_desc": "同一次历史验证资产的内部证据视角，包含 bbox / COM 等调试叠加，用于工程复核，不作为客户主视觉。",
+        "historical_video_notice": "说明：以下视频来自历史成功运行的 cup drop test，可作为当前报告的参考证据；当前 CUDA 容器异常导致本轮未重新生成同等视频，需在 GPU 可见性修复后重新跑标准流程以刷新证据。",
         "asset": "资产",
         "source": "输入 mesh",
         "output": "输出 SimReady USD",
@@ -65,6 +70,11 @@ LANG = {
         "validation": "Tests And Validation",
         "flywheel": "Data Flywheel",
         "evidence": "Validation Video Evidence",
+        "primary_video": "Customer-Readable Validation Video",
+        "internal_video": "Internal Technical Evidence Video",
+        "primary_video_desc": "The cup drops in the test scene and lands on the table, showing that the asset entered an executable physics-validation flow.",
+        "internal_video_desc": "Internal evidence view from the same historical cup drop validation family, with bbox / COM debug overlays for engineering review rather than customer-facing presentation.",
+        "historical_video_notice": "Note: the videos below come from a historical successful cup drop test and are used as reference evidence for this report. The current CUDA container issue prevented regenerating an equivalent video in this run; rerun the standard workflow after GPU visibility is fixed to refresh the evidence.",
         "asset": "Asset",
         "source": "Input mesh",
         "output": "Output SimReady USD",
@@ -99,6 +109,15 @@ LANG = {
 
 
 @dataclass
+class VideoEvidence:
+    role: str
+    label_key: str
+    description_key: str
+    video_path: Optional[str]
+    compressed_video_path: Optional[str]
+
+
+@dataclass
 class ReportInputs:
     asset_name: str
     source_usd: Optional[str]
@@ -111,6 +130,8 @@ class ReportInputs:
     proxy_report: Dict[str, Any]
     video_path: Optional[str]
     compressed_video_path: Optional[str]
+    internal_video_path: Optional[str]
+    internal_compressed_video_path: Optional[str]
     embed_video: bool
     max_embed_bytes: int
     require_video: bool
@@ -231,8 +252,44 @@ def _compress_video(video_path: Optional[str], output_dir: str, max_width: int, 
     return None
 
 
-def _video_html(inputs: ReportInputs, labels: Dict[str, str], output_path: str) -> Tuple[str, str]:
-    chosen = _first_existing(inputs.compressed_video_path, inputs.video_path)
+def _video_evidence_items(inputs: ReportInputs) -> List[VideoEvidence]:
+    return [
+        VideoEvidence(
+            role="primary_customer",
+            label_key="primary_video",
+            description_key="primary_video_desc",
+            video_path=inputs.video_path,
+            compressed_video_path=inputs.compressed_video_path,
+        ),
+        VideoEvidence(
+            role="internal_engineering",
+            label_key="internal_video",
+            description_key="internal_video_desc",
+            video_path=inputs.internal_video_path,
+            compressed_video_path=inputs.internal_compressed_video_path,
+        ),
+    ]
+
+
+def _video_record(item: VideoEvidence) -> Dict[str, Any]:
+    chosen = _first_existing(item.compressed_video_path, item.video_path)
+    return {
+        "role": item.role,
+        "path": chosen,
+        "source_path": item.video_path,
+        "compressed_path": item.compressed_video_path,
+        "exists": bool(chosen),
+        "size_bytes": os.path.getsize(chosen) if chosen and os.path.exists(chosen) else 0,
+    }
+
+
+def _single_video_html(
+    item: VideoEvidence,
+    inputs: ReportInputs,
+    labels: Dict[str, str],
+    output_path: str,
+) -> Tuple[str, str]:
+    chosen = _first_existing(item.compressed_video_path, item.video_path)
     if not chosen:
         return f'<div class="empty">{_escape(labels["no_video"])}</div>', ""
 
@@ -250,6 +307,25 @@ def _video_html(inputs: ReportInputs, labels: Dict[str, str], output_path: str) 
         f'<video controls preload="metadata" src="{_escape(rel)}"></video><p><a href="{_escape(rel)}">{_escape(os.path.basename(chosen))}</a></p>',
         labels["video_link_note"],
     )
+
+
+def _video_html(inputs: ReportInputs, labels: Dict[str, str], output_path: str) -> str:
+    cards: List[str] = []
+    for item in _video_evidence_items(inputs):
+        if not _first_existing(item.compressed_video_path, item.video_path):
+            continue
+        markup, note = _single_video_html(item, inputs, labels, output_path)
+        cards.append(
+            '<article class="video-card">'
+            f'<h3>{_escape(labels[item.label_key])}</h3>'
+            f'<p>{_escape(labels[item.description_key])}</p>'
+            f"{markup}"
+            f'<p class="video-note">{_escape(note)}</p>'
+            "</article>"
+        )
+    if not cards:
+        return f'<div class="empty">{_escape(labels["no_video"])}</div>'
+    return f'<p class="notice">{_escape(labels["historical_video_notice"])}</p>' + "".join(cards)
 
 
 MESH_LAYER_RULES = {
@@ -434,6 +510,16 @@ def _build_report_model(inputs: ReportInputs) -> Dict[str, Any]:
                 "from": "ordinary_mesh",
                 "to": "simready_static_usd",
             },
+        },
+        "video_evidence": {
+            "notice_zh": LANG["zh"]["historical_video_notice"],
+            "notice_en": LANG["en"]["historical_video_notice"],
+            "items": [
+                record
+                for item in _video_evidence_items(inputs)
+                for record in [_video_record(item)]
+                if record.get("exists")
+            ],
         },
         "source_assessment": grouped,
         "correction_result": {
@@ -894,7 +980,7 @@ def render_html(inputs: ReportInputs, lang: str, output_path: str, model: Option
     output_usd = inputs.output_usd or _dig(report, "file", default=_dig(rec, "simready_expectations", "output_usd"))
     source_usd = inputs.source_usd or _dig(rec, "asset", "file", default=_dig(rec, "simready_expectations", "source_usd"))
     final_status = _overall_status(runtime.get("result"), runtime.get("status"), omni.get("validation_status"), omni.get("status"))
-    video_markup, video_note = _video_html(inputs, labels, output_path)
+    video_markup = _video_html(inputs, labels, output_path)
     workflow = _as_list(_workflow_items(model, inputs, lang))
     validation = _as_list(_dig(model, "runtime_validation", f"human_summary_{lang}", default=[]))
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -947,6 +1033,10 @@ def render_html(inputs: ReportInputs, lang: str, output_path: str, model: Option
     details[open] summary {{ border-bottom:1px solid var(--line); }}
     details ul {{ padding:8px 22px 16px 36px; }}
     video {{ width:100%; max-height:520px; background:#0b1117; border-radius:8px; display:block; }}
+    .video-card {{ margin-top:18px; padding-top:18px; border-top:1px solid var(--line); }}
+    .video-card:first-of-type {{ border-top:0; padding-top:0; }}
+    .video-note {{ font-size:13px; }}
+    .notice {{ border-left:4px solid var(--amber); background:#fff8ea; color:#5f3b00; padding:12px 14px; border-radius:6px; }}
     table {{ width:100%; border-collapse:collapse; font-size:14px; }} th,td {{ text-align:left; border-bottom:1px solid var(--line); padding:10px; vertical-align:top; }}
     th {{ color:var(--muted); font-weight:700; }} .empty {{ color:var(--muted); padding:22px; border:1px dashed var(--line); border-radius:8px; }}
     .foot {{ text-align:right; color:var(--muted); font-size:12px; margin-top:12px; }}
@@ -985,7 +1075,6 @@ def render_html(inputs: ReportInputs, lang: str, output_path: str, model: Option
       <section class="span-12">
         <h2>{_escape(labels['evidence'])}</h2>
         {video_markup}
-        <p>{_escape(video_note)}</p>
       </section>
     </div>
     <div class="foot">{_escape(labels['generated'])}: {_escape(generated)}</div>
@@ -1005,6 +1094,9 @@ def build_report_inputs(args: argparse.Namespace, output_dir: str) -> ReportInpu
     compressed = args.compressed_video
     if args.video and args.compress_video and not compressed:
         compressed = _compress_video(args.video, output_dir, args.video_max_width, args.video_crf)
+    internal_compressed = args.internal_compressed_video
+    if args.internal_video and args.compress_video and not internal_compressed:
+        internal_compressed = _compress_video(args.internal_video, output_dir, args.video_max_width, args.video_crf)
     max_embed_bytes = int(float(args.max_embed_mb) * 1024 * 1024)
     chosen_video = _first_existing(compressed, args.video)
     if args.require_video:
@@ -1018,6 +1110,18 @@ def build_report_inputs(args: argparse.Namespace, output_dir: str) -> ReportInpu
                 "--require-video was set, but the selected video is larger than --max-embed-mb; "
                 "increase --max-embed-mb, pass --compress-video, or provide --compressed-video"
             )
+    chosen_internal_video = _first_existing(internal_compressed, args.internal_video)
+    if args.internal_video or args.internal_compressed_video:
+        if not chosen_internal_video:
+            raise ValueError("internal video was requested, but no existing --internal-video or --internal-compressed-video was provided")
+        internal_video_size = os.path.getsize(chosen_internal_video)
+        if internal_video_size <= 0:
+            raise ValueError(f"internal video is empty: {chosen_internal_video}")
+        if not args.no_embed_video and internal_video_size > max_embed_bytes:
+            raise ValueError(
+                "the selected internal video is larger than --max-embed-mb; "
+                "increase --max-embed-mb, pass --compress-video, or provide --internal-compressed-video"
+            )
     return ReportInputs(
         asset_name=args.asset_name or _dig(recommendation, "asset", "asset_id", default="asset"),
         source_usd=args.source_usd,
@@ -1030,6 +1134,8 @@ def build_report_inputs(args: argparse.Namespace, output_dir: str) -> ReportInpu
         proxy_report=proxy_report,
         video_path=args.video,
         compressed_video_path=compressed,
+        internal_video_path=args.internal_video,
+        internal_compressed_video_path=internal_compressed,
         embed_video=not args.no_embed_video,
         max_embed_bytes=max_embed_bytes,
         require_video=args.require_video,
@@ -1082,6 +1188,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--proxy-report", help="Optional proxy collider / mesh repair report JSON")
     parser.add_argument("--video", help="Validation video path, usually compressed mp4")
     parser.add_argument("--compressed-video", help="Pre-compressed validation video path")
+    parser.add_argument("--internal-video", help="Internal engineering evidence video path, usually with debug overlays")
+    parser.add_argument("--internal-compressed-video", help="Pre-compressed internal engineering evidence video path")
     parser.add_argument("--compress-video", action="store_true", help="Compress --video with ffmpeg before embedding/linking")
     parser.add_argument("--video-max-width", type=int, default=960)
     parser.add_argument("--video-crf", type=int, default=32)
