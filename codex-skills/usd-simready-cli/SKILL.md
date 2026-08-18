@@ -1,6 +1,6 @@
 ---
 name: usd-simready-cli
-description: Use when processing USD/USDZ/USDA/USDC assets with the usd-simready-inspector repository, especially to create self-contained SimReady-style static asset exports, fix missing MDL/texture dependencies, normalize relative asset paths, apply reference-based scale, correct Y-up/Z-up or lying-down geometry orientation, author static collision, and validate output reports.
+description: Use when processing USD/USDZ/USDA/USDC assets with the usd-simready-inspector repository, especially to create self-contained SimReady-style static asset exports, fix missing MDL/texture dependencies, normalize relative asset paths, apply reference-based scale, correct Y-up/Z-up or lying-down geometry orientation, author static collision, apply safe primitive-collider repair findings, and validate output reports.
 ---
 
 # USD SimReady CLI
@@ -15,7 +15,7 @@ python3 usd_simready_cli.py process REF_JSON INPUT_USD \
   --emit-report
 ```
 
-Run commands from the `usd_inspect` repository root unless the user gives another checkout path. The default reference is usually:
+Run commands from the `usd-simready-inspector` repository root unless the user gives another checkout path. The default reference is usually:
 
 ```text
 simready_furniture_reference_with_wikidata.json
@@ -44,6 +44,7 @@ Use this skill for:
 - Mesh-gated `process` runs that emit self-contained USD packages.
 - Scale/orientation correction, dependency packaging, static collision authoring, and post-export report checks.
 - Content Physics Agent supplement merging into recommendations.
+- Controlled candidate export for safe `RB.COL.002` primitive-collider findings from `omni-asset-cli`.
 
 Call or hand off to the `omniverse-usd-asset-validator` skill for:
 
@@ -54,6 +55,43 @@ Call or hand off to the `omniverse-usd-asset-validator` skill for:
 
 Do not duplicate validator logic in this skill. Treat validator output as an
 upstream gate and as evidence for repair decisions.
+
+## Primitive Collider Repair From Validator Findings
+
+`omni-asset-cli` owns detection and revalidation. This skill owns only the
+controlled repair of its `RB.COL.002` finding contract. The repair corrects a
+non-mesh primitive collider carrying `PhysicsMeshCollisionAPI` and
+`physics:approximation`; it is not a mesh-generation or joint-rebuild tool.
+
+First obtain the read-only findings from the validator project:
+
+```bash
+cd ~/omni-asset-cli
+.venv/bin/python omni_asset_cli.py physics-collider-audit INPUT_USD \
+  --out out/<name>_collider_audit
+```
+
+Then create a separate candidate USD here:
+
+```bash
+.venv/bin/python usd_simready_cli.py collider-repair INPUT_USD \
+  --findings /absolute/path/primitive_collider_audit.json \
+  --output OUTPUT_CANDIDATE.usda \
+  --report OUTPUT_CANDIDATE.collider_repair.json
+```
+
+Safety contract:
+
+- Require `rule_id=RB.COL.002`, `repairability=safe`, and repair owner
+  `usd-simready-inspector`; reject unrelated or duplicate finding paths.
+- Never overwrite `INPUT_USD`; `--output` must be a different path.
+- Remove only `PhysicsMeshCollisionAPI` and `physics:approximation` from the
+  selected non-mesh collider prims.
+- Preserve `PhysicsCollisionAPI`, geometry, transforms, materials, rigid
+  bodies, and joints. Do not use this command to resolve nested rigid bodies or
+  infer joint design intent.
+- Re-run `omni-asset-cli physics-collider-audit` on the output. A zero finding
+  count confirms schema cleanup only, not runtime collision behavior.
 
 ## Main Workflow
 
@@ -97,6 +135,15 @@ Apply an existing recommendation with compact binary output:
 python3 usd_simready_cli.py apply INPUT_USD RECOMMENDATION_JSON \
   --output OUTPUT_USDC \
   --output-format usdc
+```
+
+Apply validator-selected primitive-collider repair:
+
+```bash
+python3 usd_simready_cli.py collider-repair INPUT_USD \
+  --findings primitive_collider_audit.json \
+  --output OUTPUT_CANDIDATE.usda \
+  --report OUTPUT_CANDIDATE.collider_repair.json
 ```
 
 One-step process:

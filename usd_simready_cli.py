@@ -14,6 +14,7 @@ from simready_customer_report import generate_reports
 
 try:
     from apply_static_furniture_simready import build_simready_expectations, main as apply_static_main
+    from apply_primitive_collider_repair import main as primitive_collider_repair_main
     from author_proxy_collider import author_bbox_proxy_collider, main as proxy_collider_main
     from content_physics_agent import main as content_physics_main
     from content_physics_supplement import main as physics_supplement_main
@@ -24,6 +25,7 @@ try:
     _USD_RUNTIME_IMPORT_ERROR = None
 except ModuleNotFoundError as error:
     build_simready_expectations = apply_static_main = None
+    primitive_collider_repair_main = None
     author_bbox_proxy_collider = proxy_collider_main = None
     content_physics_main = physics_supplement_main = ovphysx_runtime_main = None
     diagnose_simready = format_diagnosis_summary = None
@@ -551,6 +553,17 @@ def _cmd_mesh_repair(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_collider_repair(args: argparse.Namespace) -> int:
+    if not _require_usd_runtime():
+        return 2
+    repair_args = [args.input_usd, "--findings", args.findings]
+    if args.output:
+        repair_args.extend(["--output", args.output])
+    if args.report:
+        repair_args.extend(["--report", args.report])
+    return primitive_collider_repair_main(repair_args)
+
+
 def _cmd_physics_agent(args: argparse.Namespace) -> int:
     if not _require_usd_runtime():
         return 2
@@ -824,6 +837,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Author a proxy collider even when the preflight report has no mesh blocker rules",
     )
     mesh_repair_parser.set_defaults(func=_cmd_mesh_repair)
+
+    collider_repair_parser = subparsers.add_parser(
+        "collider-repair",
+        help="Export a candidate USD by applying safe RB.COL.002 findings from omni-asset-cli",
+    )
+    collider_repair_parser.add_argument("input_usd")
+    collider_repair_parser.add_argument(
+        "--findings",
+        required=True,
+        help="primitive_collider_audit.json produced by omni-asset-cli physics-collider-audit",
+    )
+    collider_repair_parser.add_argument("--output", help="Candidate USD path; source USD is never modified")
+    collider_repair_parser.add_argument("--report", help="Primitive collider repair JSON report path")
+    collider_repair_parser.set_defaults(func=_cmd_collider_repair)
 
     physics_agent_parser = subparsers.add_parser(
         "physics-agent",
