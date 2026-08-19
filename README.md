@@ -69,6 +69,12 @@ Practical impact:
 - Python 3
 - `pxr` USD Python bindings
 
+For workflows that select an upstream Foundation profile, deploy the separate
+pinned Foundation runtime and follow the ownership boundary in
+[FOUNDATION_PROFILE_DEPLOYMENT.md](FOUNDATION_PROFILE_DEPLOYMENT.md). This
+Inspector does not execute or pass Foundation profiles; it only writes
+controlled candidate repairs for findings supplied by `omni-asset-cli`.
+
 Quick check:
 
 ```bash

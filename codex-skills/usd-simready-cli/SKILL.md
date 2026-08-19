@@ -32,6 +32,7 @@ Before running the workflow, verify these requirements:
 - Write access to the output directory so copied textures, recommendation JSON, and report JSON can be emitted.
 - `~/omni-asset-cli/omni_asset_cli.py` for source mesh preflight before `process`; use `--omni-asset-cli` when the checkout is elsewhere.
 - Downstream runtime validation must use Linux + Isaac Sim Docker through `omni-asset-cli physics-hit-test`; do not treat host Python or non-container runtimes as authoritative.
+- Foundation-profile-dependent work additionally requires the separately pinned Foundation checkout documented in `FOUNDATION_PROFILE_DEPLOYMENT.md`. This skill does not execute a Foundation profile: `omni-asset-cli` owns `foundation-validate --official-cli --shadow`, upstream finding provenance, native PhysX evidence, and Docker contact acceptance.
 - Current `usd_simready_cli.py apply/process` includes post-export bbox size validation by default. Use `--skip-size-validation` only when the user explicitly accepts bypassing scale/orientation validation.
 
 If `pxr` is missing, stop and tell the user the USD Python bindings are required; do not fabricate report results.
@@ -55,6 +56,23 @@ Call or hand off to the `omniverse-usd-asset-validator` skill for:
 
 Do not duplicate validator logic in this skill. Treat validator output as an
 upstream gate and as evidence for repair decisions.
+
+## Foundation Profile Handoff
+
+For the passive cart / physics-prop workflow, the upstream baseline is
+`Prop-Robotics-Physx v1.0.0` from Foundation `v2026.04.1`. Receive its profile
+name, pinned tag/commit, normalized finding artifact, and selected asset SHA
+from `omni-asset-cli`. This inspector may only create a new candidate from a
+safe repair contract; it must never label that candidate as Foundation-passing
+without the downstream revalidation result.
+
+Keep these conclusions separate in reports:
+
+- Foundation approximation/profile result: upstream authoring conformance.
+- `RB.COL.003` from `omni-asset-cli`: local risk that cooked convex shapes can
+  diverge from visual mesh.
+- Native PhysX view plus contact/A-B probe: runtime evidence of an actual
+  air-wall.
 
 ## Primitive Collider Repair From Validator Findings
 
