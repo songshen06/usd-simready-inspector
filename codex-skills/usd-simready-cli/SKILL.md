@@ -96,7 +96,11 @@ python3 usd_simready_cli.py author VISUAL.usda --handoff handoff.json --output A
 # 4. check the authored asset against a profile (delegates to simready-validate)
 python3 usd_simready_cli.py conformance AUTHORED.usda --profile auto --output conformance.json
 
-# 5. repair only the codes the profile reports as failing, then re-validate
+# 5. freeze the static expectations for the downstream GPU harness
+python3 usd_simready_cli.py runtime-request --conformance conformance.json \
+  --handoff handoff.json --output runtime_request.json
+
+# 6. repair only the codes the profile reports as failing, then re-validate
 python3 usd_simready_cli.py repair AUTHORED.usda --candidate-root out/candidates --render-thumbnail
 ```
 
@@ -107,6 +111,7 @@ python3 usd_simready_cli.py repair AUTHORED.usda --candidate-root out/candidates
 | `author` | visual USD + handoff | authored USD + audit | 0 ok, 1 refused, 2 unreadable input |
 | `conformance` | USD | conformance JSON | 0 conformant, 1 non-conformant, 2 not evaluated |
 | `repair` | USD (+ findings) | candidate USD + audit | 0 conformant after repair, 1 still failing / no licensed repair, 2 not evaluated |
+| `runtime-request` | conformance JSON + handoff | runtime request JSON | 0 ok, 2 unreadable input |
 
 Rules that keep the boundary stable:
 
@@ -135,6 +140,16 @@ Rules that keep the boundary stable:
 - **Repair needs authorization.** A repairer runs only when the active profile
   reports that requirement code as failing; otherwise the finding is reported as
   `unlicensed` (not applicable) or `unsupported` (no repairer) and left untouched.
+- **Local conformance is a pre-check, never the authority.** The GPU harness
+  (`omni-asset-cli foundation-validate`) runs a pinned Foundation tag in the
+  runtime image; that verdict plus runtime contact evidence is authoritative.
+  The runtime request therefore carries `"authoritative": false` and the exact
+  versions the local check used.
+- **The runtime request is frozen, not recomputed.** It records expected body
+  count, joint count, kinematic bases, mass and max travel. `diagnose
+  --runtime-request` re-checks those against the current inspection and fails
+  when the asset changed underneath the request (stale request), instead of
+  trusting a document nobody updated.
 - **A thumbnail is never fabricated.** `--render-thumbnail` copies an existing PNG
   or renders one with `usdrecord`, then Blender; failure reports `unavailable` and
   leaves `SR.002` failing.
@@ -226,6 +241,20 @@ Check against a profile:
 
 ```bash
 python3 usd_simready_cli.py conformance INPUT_USD --profile auto --output CONFORMANCE_JSON
+```
+
+Freeze runtime expectations for the GPU harness:
+
+```bash
+python3 usd_simready_cli.py runtime-request --conformance CONFORMANCE_JSON \
+  --handoff HANDOFF_JSON --foundation-tag v2026.04.1 --output RUNTIME_REQUEST_JSON
+```
+
+Diagnose with runtime evidence and the frozen request:
+
+```bash
+python3 usd_simready_cli.py diagnose --recommendation REC_JSON --report INSPECTION_JSON \
+  --runtime-report RUNTIME_REPORT_JSON --runtime-request RUNTIME_REQUEST_JSON --output DIAGNOSIS_JSON
 ```
 
 Profile-licensed repair with re-validation:
