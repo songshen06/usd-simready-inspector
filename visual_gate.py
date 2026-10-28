@@ -41,6 +41,34 @@ def _bbox(cache: UsdGeom.BBoxCache, prim: Usd.Prim) -> Optional[List[float]]:
         return None
 
 
+def _is_xformable(prim: Usd.Prim) -> bool:
+    """Xform or a typeless grouping prim (DCC exporters emit both)."""
+    return prim.IsA(UsdGeom.Xform) or str(prim.GetTypeName()) == ""
+
+
+def _parts(stage: Usd.Stage, cache: UsdGeom.BBoxCache) -> List[Dict[str, Any]]:
+    """Leaf grouping prims: they hold meshes, but no descendant group does."""
+    parts: List[Dict[str, Any]] = []
+    for prim in stage.Traverse():
+        if prim.IsA(UsdGeom.Mesh):
+            continue
+        meshes = [child for child in Usd.PrimRange(prim) if child.IsA(UsdGeom.Mesh)]
+        if not meshes:
+            continue
+        nested_groups = [child for child in prim.GetChildren()
+                         if not child.IsA(UsdGeom.Mesh)
+                         and any(desc.IsA(UsdGeom.Mesh) for desc in Usd.PrimRange(child))]
+        if nested_groups:
+            continue
+        parts.append({
+            "prim": prim.GetPath().pathString,
+            "meshes": len(meshes),
+            "bbox": _bbox(cache, prim),
+            "materials": sorted({m for m in (_material_of(c) for c in meshes) if m}),
+        })
+    return parts
+
+
 def _material_of(prim: Usd.Prim) -> Optional[str]:
     try:
         bound, _ = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial()
@@ -128,7 +156,7 @@ def run_gate(stage: Usd.Stage, report: Dict[str, Any], handoff: Optional[Dict[st
                 missing.append(path)
                 continue
             meshes = [c for c in Usd.PrimRange(prim) if c.IsA(UsdGeom.Mesh)]
-            if not prim.IsA(UsdGeom.Xformable) or not meshes:
+            if not _is_xformable(prim) or not meshes:
                 malformed.append(path)
         checks.append(_check("GATE.07", "declared moving parts resolve to Xforms with mesh descendants",
                              not missing and not malformed,
@@ -165,20 +193,7 @@ def run_gate(stage: Usd.Stage, report: Dict[str, Any], handoff: Optional[Dict[st
                              "stable" if not added and not removed
                              else f"added={added[:3]} removed={removed[:3]}"))
 
-    parts = []
-    for prim in stage.Traverse():
-        if not prim.IsA(UsdGeom.Xform):
-            continue
-        children = [child for child in Usd.PrimRange(prim) if child.IsA(UsdGeom.Mesh)]
-        if not children:
-            continue
-        box = _bbox(cache, prim)
-        parts.append({
-            "prim": prim.GetPath().pathString,
-            "meshes": len(children),
-            "bbox": box,
-            "materials": sorted({m for m in (_material_of(c) for c in children) if m}),
-        })
+    parts = _parts(stage, cache)
 
     status = "pass" if all(check["status"] == "pass" for check in checks) else "fail"
     return {
