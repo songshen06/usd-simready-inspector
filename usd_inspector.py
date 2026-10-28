@@ -259,6 +259,12 @@ def _get_variant_sets(prim: Usd.Prim) -> List[Dict[str, Any]]:
 
 
 def _collect_semantic_attrs(prim: Usd.Prim) -> List[Dict[str, Any]]:
+    """Collect semantic metadata.
+
+    Supports both the legacy nested form (``semantic:<key>:semanticData``) and the
+    current SimReady Foundation form authored by ``SemanticsLabelsAPI``
+    (``semantics:labels:<taxonomy>``).
+    """
     entries: List[Dict[str, Any]] = []
     grouped: Dict[str, Dict[str, Any]] = {}
     for attr in prim.GetAttributes():
@@ -266,10 +272,28 @@ def _collect_semantic_attrs(prim: Usd.Prim) -> List[Dict[str, Any]]:
             name = str(attr.GetName())
         except Exception:
             continue
+        if name.startswith("semantics:labels"):
+            parts = name.split(":")
+            taxonomy = parts[2] if len(parts) > 2 else "class"
+            try:
+                raw_labels = attr.Get() or []
+                labels = [str(item) for item in raw_labels]
+            except Exception:
+                labels = []
+            entries.append(
+                {
+                    "path": prim.GetPath().pathString,
+                    "semantic_key": taxonomy,
+                    "namespace": "semantics:labels",
+                    "semantic_source": "SemanticsLabelsAPI",
+                    "labels": labels,
+                }
+            )
+            continue
         if not name.startswith("semantic:"):
             continue
         parts = name.split(":")
-        if len(parts) < 4:
+        if len(parts) < 3:
             continue
         key = ":".join(parts[:-1])
         field_name = parts[-1]
@@ -288,11 +312,28 @@ def _collect_semantic_attrs(prim: Usd.Prim) -> List[Dict[str, Any]]:
         elif field_name == "semanticType":
             entry["semantic_type"] = _get_attr_value(attr)
 
-    for item in grouped.values():
+    for key, item in grouped.items():
         if item.get("semantic_data") is None and item.get("semantic_type") is None:
             continue
+        if not item.get("semantic_type"):
+            # e.g. semantic:class:semanticData -> taxonomy "class"
+            item["semantic_type"] = key.split(":")[-1]
         entries.append(item)
     return entries
+
+
+def _normalize_semantic_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Flatten either semantic form into {path, taxonomy, labels, source}."""
+    labels = entry.get("labels")
+    if labels is None:
+        raw = str(entry.get("semantic_data") or "")
+        labels = [part.strip() for part in raw.replace(";", ",").split(",") if part.strip()]
+    return {
+        "path": entry.get("path"),
+        "taxonomy": entry.get("semantic_key") or entry.get("semantic_type"),
+        "labels": [str(item) for item in labels],
+        "source": entry.get("semantic_source") or "semantic:*",
+    }
 
 
 def _get_applied_schema_names(prim: Usd.Prim) -> List[str]:
@@ -845,6 +886,21 @@ def inspect_materials(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
                 }
             )
 
+    direct_render_materials: Dict[str, set] = {}
+    for binding in bindings:
+        if binding.get("whether_on_subset"):
+            continue
+        purpose = (binding.get("binding_purpose") or "full").lower()
+        if purpose == "physics" or not binding.get("material_path"):
+            continue
+        direct_render_materials.setdefault((binding["target_prim"], purpose), set()).add(binding["material_path"])
+
+    meshes_with_subsets = {item["subset_path"].rsplit("/", 1)[0] for item in subsets}
+    multi_material_meshes_without_subsets = sorted(
+        path for (path, _purpose), materials in direct_render_materials.items()
+        if len(materials) > 1 and path not in meshes_with_subsets
+    )
+
     for binding in bindings:
         purpose = binding.get("binding_purpose")
         if purpose and "physics" in purpose.lower():
@@ -866,6 +922,7 @@ def inspect_materials(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
         "render_materials": render_materials,
         "physics_materials": physics_materials,
         "physics_material_bindings": physics_material_bindings,
+        "multi_material_meshes_without_subsets": multi_material_meshes_without_subsets,
         "material_family_candidates": [],
     }
 
@@ -968,7 +1025,7 @@ def _path_has_prefix(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + "/")
 
 
-def _nearest_rigid_body_ancestor(prim: Usd.Prim, rigid_body_paths: List[str]) -> Optional[str]:
+def _nearest_rigid_body_ancestor(prim: Usd.Prim, rigid_body_paths) -> Optional[str]:
     current = prim
     while current and current.IsValid():
         current_path = current.GetPath().pathString
@@ -978,25 +1035,28 @@ def _nearest_rigid_body_ancestor(prim: Usd.Prim, rigid_body_paths: List[str]) ->
     return None
 
 
-def _nearest_physics_scene(stage: Usd.Stage, prim: Usd.Prim) -> Optional[str]:
-    if UsdPhysics is None:
-        return None
-    try:
-        current = prim
-        while current and current.IsValid():
-            if current.IsA(UsdPhysics.Scene):
-                return current.GetPath().pathString
-            current = current.GetParent()
-    except Exception:
-        return None
+def _make_scene_resolver(scene_paths):
+    """Return an O(depth) physics-scene lookup.
 
-    try:
-        scenes = [item for item in stage.Traverse() if item.IsA(UsdPhysics.Scene)]
-        if len(scenes) == 1:
-            return scenes[0].GetPath().pathString
-    except Exception:
-        return None
-    return None
+    The previous implementation traversed the whole stage for every collider whose
+    ancestor chain held no UsdPhysics.Scene, which is quadratic on large assets.
+    """
+    path_set = set(scene_paths)
+    single = next(iter(path_set)) if len(path_set) == 1 else None
+
+    def resolve(prim: Usd.Prim) -> Optional[str]:
+        current = prim
+        try:
+            while current and current.IsValid():
+                path = current.GetPath().pathString
+                if path in path_set:
+                    return path
+                current = current.GetParent()
+        except Exception:
+            return single
+        return single
+
+    return resolve
 
 
 def inspect_physics(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
@@ -1142,32 +1202,52 @@ def inspect_physics(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
 
     rigid_body_paths = [item.get("path") for item in rigid_bodies if item.get("path")]
     rigid_body_paths_set = set(rigid_body_paths)
+    kinematic_bodies = {
+        item.get("path") for item in rigid_bodies if item.get("path") and item.get("kinematic_enabled")
+    }
+    scene_for = _make_scene_resolver([item["path"] for item in scenes])
     dynamic_collider_count = 0
     static_collider_count = 0
+    kinematic_collider_count = 0
     for collider in colliders:
         collider_path = collider.get("path") or ""
         prim = stage.GetPrimAtPath(collider_path)
-        rigid_body_ancestor = _nearest_rigid_body_ancestor(prim, rigid_body_paths) if prim and prim.IsValid() else None
-        subtree_root = rigid_body_ancestor
+        rigid_body_ancestor = _nearest_rigid_body_ancestor(prim, rigid_body_paths_set) if prim and prim.IsValid() else None
         nested_under_other = False
         if rigid_body_ancestor:
-            for other_path in rigid_body_paths_set:
-                if other_path == rigid_body_ancestor:
-                    continue
-                if _path_has_prefix(rigid_body_ancestor, other_path):
+            parent = stage.GetPrimAtPath(rigid_body_ancestor)
+            parent = parent.GetParent() if parent else None
+            while parent and parent.IsValid():
+                if parent.GetPath().pathString in rigid_body_paths_set:
                     nested_under_other = True
                     break
-        body_type = "dynamic_or_kinematic" if rigid_body_ancestor else "static"
-        if body_type == "static":
+                parent = parent.GetParent()
+        if not rigid_body_ancestor:
+            body_type = "static"
             static_collider_count += 1
+        elif rigid_body_ancestor in kinematic_bodies:
+            body_type = "kinematic"
+            kinematic_collider_count += 1
         else:
+            body_type = "dynamic"
             dynamic_collider_count += 1
         collider["rigid_body_ancestor"] = rigid_body_ancestor
         collider["body_type"] = body_type
         collider["is_static_collider"] = body_type == "static"
+        collider["is_kinematic_collider"] = body_type == "kinematic"
         collider["is_rigid_body_root"] = collider_path in rigid_body_paths_set
         collider["nested_rigid_body_root"] = nested_under_other
-        collider["simulation_owner"] = _nearest_physics_scene(stage, prim) if prim and prim.IsValid() else None
+        collider["simulation_owner"] = scene_for(prim) if prim and prim.IsValid() else None
+
+    if joints:
+        # a prim satisfies UsdPhysics.Joint *and* its subtype, so the loop above
+        # records it twice; keep the most specific schema per prim
+        best: Dict[str, Dict[str, Any]] = {}
+        for item in joints:
+            current = best.get(item["path"])
+            if current is None or len(item["joint_type"]) > len(current["joint_type"]):
+                best[item["path"]] = item
+        joints = [item for item in joints if best.get(item["path"]) is item]
 
     return {
         "scenes": scenes,
@@ -1178,6 +1258,7 @@ def inspect_physics(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
         "joints": joints,
         "physx": physx_entries,
         "static_collider_count": static_collider_count,
+        "kinematic_collider_count": kinematic_collider_count,
         "dynamic_collider_count": dynamic_collider_count,
         "physics_schemas_detected": sorted(physics_schemas_detected),
         "physics_profile_candidates": [],
@@ -1255,7 +1336,7 @@ def inspect_metadata(stage: Usd.Stage, max_prims: int = 0) -> Dict[str, Any]:
         "display_names": display_names,
         "model_metadata": model_metadata,
         "semantic_entries": semantic_entries,
-        "semantic_candidates": [],
+        "semantic_candidates": [_normalize_semantic_entry(entry) for entry in semantic_entries],
     }
 
 
@@ -1281,13 +1362,20 @@ def build_issues(report: Dict[str, Any]) -> Tuple[List[str], List[str]]:
         issues.append("Stage has Mesh prims but no physics schemas were detected.")
     if physics.get("colliders") and not physics.get("mass_api"):
         issues.append("Collider prims detected but no MassAPI detected.")
-    if (summary.get("material_count") or 0) > 1 and not materials.get("subsets"):
-        issues.append("Multiple materials found but no GeomSubset-based assignments were detected.")
+    multi_material_meshes = materials.get("multi_material_meshes_without_subsets") or []
+    if multi_material_meshes:
+        sample = ", ".join(multi_material_meshes[:3])
+        issues.append(
+            f"{len(multi_material_meshes)} mesh prim(s) bind multiple render materials without GeomSubsets "
+            f"(only one binding wins): {sample}"
+        )
     if geometry.get("bbox_failures"):
         issues.append("One or more bbox computations failed; inspect geometry.bbox_failures.")
     if asset_dependencies.get("missing_relative"):
         issues.append("One or more relative asset dependencies are missing; inspect asset_dependencies.missing_relative.")
 
+    if (summary.get("material_count") or 0) > 1 and not materials.get("subsets"):
+        notes.append("Multiple materials are bound per prim (no GeomSubsets); this is valid USD practice.")
     if geometry.get("shape_hints"):
         notes.append("shape_hints are heuristic only and should be validated in downstream pipeline logic.")
     if physics.get("physx"):
@@ -1308,7 +1396,7 @@ def build_detailed_report(stage: Usd.Stage, input_path: str, max_prims: int = 0)
     report["physics"] = inspect_physics(stage, max_prims=max_prims)
     report["metadata"] = inspect_metadata(stage, max_prims=max_prims)
     report["asset_dependencies"] = inspect_asset_dependencies(stage, input_path, max_prims=max_prims)
-    report["semantic_candidates"] = []
+    report["semantic_candidates"] = report["metadata"].get("semantic_candidates", [])
     report["physics_profile_candidates"] = report["physics"].get("physics_profile_candidates", [])
     report["collider_recommendation"] = report["geometry"].get("collider_recommendation", {})
     report["material_family_candidates"] = report["materials"].get("material_family_candidates", [])
