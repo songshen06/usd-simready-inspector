@@ -862,6 +862,34 @@ def _cmd_physics_supplement(args: argparse.Namespace) -> int:
     return physics_supplement_main(supplement_args)
 
 
+def _cmd_runtime_request(args: argparse.Namespace) -> int:
+    """Freeze the static side's expectations for the GPU harness."""
+    import runtime_request
+
+    try:
+        conformance = load_json(args.conformance)
+        handoff = load_json(args.handoff) if args.handoff else None
+        document = runtime_request.build(
+            conformance, handoff,
+            asset=args.asset,
+            foundation_tag=args.foundation_tag,
+            package=args.package,
+        )
+    except (OSError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+    text = json.dumps(document, indent=2 if args.pretty else None, ensure_ascii=False)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        print(args.output)
+    else:
+        print(text)
+    print(f"[runtime-request] {runtime_request.summarize(document)}", file=sys.stderr)
+    return 0
+
+
 def _cmd_diagnose(args: argparse.Namespace) -> int:
     if not _require_usd_runtime():
         return 2
@@ -869,6 +897,16 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
     report = load_json(args.report)
     runtime_report = load_json(args.runtime_report) if args.runtime_report else None
     result = diagnose_simready(recommendation, report, runtime_report)
+    if getattr(args, "runtime_request", None):
+        import runtime_request
+
+        request = load_json(args.runtime_request)
+        checks = runtime_request.compare(request, report, runtime_report)
+        result.setdefault("checks", []).extend(checks)
+        failed = [check for check in checks if check["status"] == "failed"]
+        if failed:
+            result["status"] = "failed"
+            result.setdefault("diagnosis", []).append("runtime_request_stale")
     if args.output:
         save_json(args.output, result, pretty=True)
         print(args.output)
@@ -1275,8 +1313,23 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose_parser.add_argument("--recommendation", required=True)
     diagnose_parser.add_argument("--report", required=True)
     diagnose_parser.add_argument("--runtime-report")
+    diagnose_parser.add_argument("--runtime-request", help="simready-runtime-request JSON to compare against")
     diagnose_parser.add_argument("--output")
     diagnose_parser.set_defaults(func=_cmd_diagnose)
+
+    runtime_request_parser = subparsers.add_parser(
+        "runtime-request",
+        help="Freeze static expectations (bodies/joints/travel) for the downstream runtime harness",
+    )
+    runtime_request_parser.add_argument("--conformance", required=True, help="conformance JSON from `conformance`")
+    runtime_request_parser.add_argument("--handoff", help="handoff JSON (adds travel expectations)")
+    runtime_request_parser.add_argument("--asset", help="Asset path; defaults to the one in the conformance report")
+    runtime_request_parser.add_argument("--foundation-tag", help="Pinned Foundation tag for the reproduce command")
+    runtime_request_parser.add_argument("--package", default="physics-prop",
+                                        choices=["static-prop", "physics-prop", "articulated-asset", "runnable-robot"])
+    runtime_request_parser.add_argument("--output", help="Write the request JSON here")
+    runtime_request_parser.add_argument("--pretty", action="store_true")
+    runtime_request_parser.set_defaults(func=_cmd_runtime_request)
 
     customer_report_parser = subparsers.add_parser(
         "customer-report",
