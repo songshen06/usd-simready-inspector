@@ -394,6 +394,66 @@ def _write_recommendation(
     return output
 
 
+def _cmd_conformance(args: argparse.Namespace) -> int:
+    if not _require_usd_runtime():
+        return 2
+    import conformance
+
+    stage = open_stage(args.input_usd)
+    report = build_detailed_report(stage, args.input_usd, max_prims=max(0, args.max_prims))
+    declared_id, declared_version = conformance.declared_profile(stage)
+    report["_declared_profile"] = (declared_id, declared_version or args.version)
+
+    validator = conformance.find_validator(args.validator)
+    outcome = conformance.resolve_and_validate(
+        report,
+        args.input_usd,
+        requested=args.profile,
+        version=args.version,
+        validator=validator,
+        require_confidence=args.require_confidence,
+    )
+    decision = outcome["decision"]
+    result = outcome["result"]
+
+    if result:
+        block = conformance.summarize_result(result)
+    else:
+        block = {
+            "profile_id": decision.profile_id,
+            "profile_version": decision.profile_version,
+            "status": "not_evaluated",
+            "failing_required_features": [],
+            "deferred_to_runtime": {},
+            "features": {},
+        }
+        if outcome["status"] == "unresolved":
+            block["status"] = "not_evaluated"
+            block["reason"] = "no profile candidate could be confirmed"
+
+    payload = {
+        "asset": args.input_usd,
+        "decision_status": outcome["status"],
+        "profile_decision": decision.to_dict(),
+        "conformance": block,
+        "runtime_handoff": conformance.build_runtime_handoff(
+            stage, report, block, args.input_usd, validator
+        ),
+        "summary": report.get("summary", {}),
+    }
+    text = json.dumps(payload, indent=2 if args.pretty else None, ensure_ascii=False)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    else:
+        print(text)
+    audit = payload["profile_decision"].get("source")
+    shown = outcome["status"] if outcome["status"] != "validated" else block["status"]
+    print(f"[{shown}] profile={decision.profile_id or 'unresolved'} "
+          f"source={audit} confidence={decision.confidence:.2f}", file=sys.stderr)
+    return conformance.exit_code_for(outcome["status"], block)
+
+
 def _cmd_inspect(args: argparse.Namespace) -> int:
     if not _require_usd_runtime():
         return 2
@@ -752,6 +812,29 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--pretty", action="store_true")
     inspect_parser.add_argument("--max-prims", type=int, default=0)
     inspect_parser.set_defaults(func=_cmd_inspect)
+
+    conformance_parser = subparsers.add_parser(
+        "conformance",
+        help="Validate an asset against a SimReady profile (static contract only)",
+    )
+    conformance_parser.add_argument("input_usd", help="Path to the asset to validate")
+    conformance_parser.add_argument(
+        "--profile", default="auto",
+        help="Profile id, or 'auto' to infer it from the asset (default: auto)",
+    )
+    conformance_parser.add_argument("--version", help="Profile version; omit to accept any registered version")
+    conformance_parser.add_argument(
+        "--validator",
+        help="Path to simready-validate (default: $SIMREADY_VALIDATE or PATH)",
+    )
+    conformance_parser.add_argument(
+        "--require-confidence", type=float, default=0.0,
+        help="Fail when the resolved profile is below this confidence (0..1)",
+    )
+    conformance_parser.add_argument("--max-prims", type=int, default=0)
+    conformance_parser.add_argument("--output", help="Write conformance JSON to this path")
+    conformance_parser.add_argument("--pretty", action="store_true")
+    conformance_parser.set_defaults(func=_cmd_conformance)
 
     recommend_parser = subparsers.add_parser("recommend", help="Generate a SimReady recommendation JSON")
     recommend_parser.add_argument("reference_json")
