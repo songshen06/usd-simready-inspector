@@ -90,10 +90,13 @@ python3 usd_simready_cli.py inspect VISUAL.usda --gate visual --output inspectio
 # 2. merge declared intent with measured geometry
 python3 usd_simready_cli.py handoff --report inspection.json --intent intent.json --output handoff.json
 
-# 3. check the authored asset against a profile (delegates to simready-validate)
+# 3. author rigid bodies, colliders and joints from the handoff
+python3 usd_simready_cli.py author VISUAL.usda --handoff handoff.json --output AUTHORED.usda
+
+# 4. check the authored asset against a profile (delegates to simready-validate)
 python3 usd_simready_cli.py conformance AUTHORED.usda --profile auto --output conformance.json
 
-# 4. repair only the codes the profile reports as failing, then re-validate
+# 5. repair only the codes the profile reports as failing, then re-validate
 python3 usd_simready_cli.py repair AUTHORED.usda --candidate-root out/candidates --render-thumbnail
 ```
 
@@ -101,6 +104,7 @@ python3 usd_simready_cli.py repair AUTHORED.usda --candidate-root out/candidates
 | --- | --- | --- | --- |
 | `inspect --gate visual` | visual USD (+ optional handoff, baseline) | inspection JSON | 0 pass, 1 gate failed |
 | `handoff` | inspection JSON + intent JSON | handoff JSON | 0 ok, 1 invalid intent, 2 unreadable input |
+| `author` | visual USD + handoff | authored USD + audit | 0 ok, 1 refused, 2 unreadable input |
 | `conformance` | USD | conformance JSON | 0 conformant, 1 non-conformant, 2 not evaluated |
 | `repair` | USD (+ findings) | candidate USD + audit | 0 conformant after repair, 1 still failing / no licensed repair, 2 not evaluated |
 
@@ -113,7 +117,14 @@ Rules that keep the boundary stable:
   changes, regenerate the handoff instead of editing values.
 - **`facts_digest` pins the geometry** the handoff was built from; a mismatch means
   the asset was re-exported and the handoff is stale.
-- **Authoring must not re-read geometry heuristically**: it consumes the handoff.
+- **Authoring consumes the handoff and nothing else.** `author` takes pivot,
+  travel, axis and mass policy from the handoff; it refuses an input that already
+  carries physics, and it refuses a rotated moving part (non-identity world
+  rotation) instead of inventing joint frames. Refusals are explicit error codes,
+  never a silent approximation.
+- **Mass is volume x density.** Signed-tetrahedron volume keeps hollow parts
+  honest; a solid proxy box will report a solid-box mass, so check the modelling
+  deliverable, not the formula, when masses look wrong.
 - **Conformance is not ours to decide.** It calls `simready-validate` in a
   subprocess (`--validator`, `$SIMREADY_VALIDATE`, or `PATH`); that package needs
   Python < 3.13, so never import it into the DCC interpreter.
@@ -201,6 +212,12 @@ Derive the authoring handoff:
 
 ```bash
 python3 usd_simready_cli.py handoff --report INSPECTION_JSON --intent INTENT_JSON --output HANDOFF_JSON
+```
+
+Author physics from the handoff:
+
+```bash
+python3 usd_simready_cli.py author VISUAL_USD --handoff HANDOFF_JSON --output AUTHORED_USD --report AUDIT_JSON
 ```
 
 Check against a profile:
