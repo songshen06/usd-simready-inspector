@@ -37,6 +37,29 @@ Before running the workflow, verify these requirements:
 
 If `pxr` is missing, stop and tell the user the USD Python bindings are required; do not fabricate report results.
 
+## Local environment
+
+Use the repository virtualenv, not the system interpreter: it carries `pxr`
+(`usd-core`), `simready-validate` and `pytest`.
+
+```bash
+.venv/bin/python usd_simready_cli.py inspect INPUT_USD --output report.json
+export SIMREADY_VALIDATE="$PWD/.venv/bin/simready-validate"   # conformance/repair
+```
+
+Recreate it with:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt -r requirements-dev.txt \
+  "simready-validate>=2026.8.0,<2026.9.0" simready-foundation-tier-core
+```
+
+`simready-validate` requires Python < 3.13, so never install it into a newer
+interpreter (for example Blender's bundled Python). If `.venv` is missing, run
+`.venv/bin/python -c "from pxr import Usd"` first and create the venv before
+claiming any result.
+
 ## Skill Boundary
 
 Use this skill for:

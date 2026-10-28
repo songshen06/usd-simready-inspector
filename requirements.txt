@@ -1,2 +1,4 @@
-pxr
+# The USD Python bindings ship in the `usd-core` wheel; `pxr` is not a
+# standalone PyPI project, so `pip install pxr` fails.
+usd-core
 PyYAML
