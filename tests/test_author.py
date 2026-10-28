@@ -6,7 +6,7 @@ import sys
 import pytest
 
 pytest.importorskip("pxr")
-from pxr import Usd, UsdGeom, UsdPhysics
+from pxr import Gf, Usd, UsdGeom, UsdPhysics
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -65,17 +65,38 @@ def test_refuses_input_that_already_has_physics(tmp_path):
     assert "AU.03" in {issue["code"] for issue in error.value.issues}
 
 
-def test_refuses_unrotated_assumption_violation(tmp_path):
+def test_rotated_moving_part_gets_a_compensating_joint_frame(tmp_path):
     path, stage = build_visual(tmp_path)
-    drawer = stage.GetPrimAtPath("/cab/geometry/drawer_01")
-    UsdGeom.Xformable(drawer).AddRotateYOp().Set(5.0)
+    UsdGeom.Xformable(stage.GetPrimAtPath("/cab/geometry/drawer_01")).AddRotateYOp().Set(5.0)
+    stage.GetRootLayer().Save()
+
+    reopened = Usd.Stage.Open(path)
+    document = _handoff_for(reopened)
+    out = str(tmp_path / "out.usda")
+    audit = author.author(path, document, out)
+
+    rotated = [item for item in audit["moving"] if item["prim"].endswith("drawer_01")][0]
+    assert rotated["rotation_offset_deg"] == pytest.approx(5.0, abs=1e-2)
+
+    authored = Usd.Stage.Open(out)
+    joints = [prim for prim in authored.Traverse() if prim.IsA(UsdPhysics.PrismaticJoint)
+              and prim.GetPath().pathString.endswith("drawer_01")]
+    assert len(joints) == 1
+    quat = UsdPhysics.PrismaticJoint(joints[0]).GetLocalRot1Attr().Get()
+    assert abs(float(quat.GetReal())) < 0.9999  # not identity: the frame absorbs the rotation
+
+
+def test_non_unit_scale_is_refused(tmp_path):
+    path, stage = build_visual(tmp_path)
+    UsdGeom.Xformable(stage.GetPrimAtPath("/cab/geometry/drawer_01")).AddScaleOp().Set(
+        Gf.Vec3f(1.05, 1.05, 1.05))
     stage.GetRootLayer().Save()
 
     reopened = Usd.Stage.Open(path)
     document = _handoff_for(reopened)
     with pytest.raises(author.AuthoringError) as error:
         author.author(path, document, str(tmp_path / "out.usda"))
-    assert "AU.07" in {issue["code"] for issue in error.value.issues}
+    assert "AU.09" in {issue["code"] for issue in error.value.issues}
 
 
 def test_never_writes_over_the_input(tmp_path):

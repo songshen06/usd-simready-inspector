@@ -134,15 +134,22 @@ def author(input_usd: str, handoff: Dict[str, Any], output_usd: str) -> Dict[str
         for mesh in _subtree_meshes(prim):
             _ensure_collider(mesh)
 
-        axis_index = {"X": 0, "Y": 1, "Z": 2}[entry["joint"]["axis"]]
         travel = float(entry["travel_m"])
         pivot = Gf.Vec3d(*[float(value) for value in entry["pivot"]])
-        world_rotation = cache.GetLocalToWorldTransform(prim).ExtractRotationMatrix()
-        if abs(world_rotation.GetDeterminant() - 1.0) > 1e-3 or not _is_identity(world_rotation):
+        moving_matrix = cache.GetLocalToWorldTransform(prim)
+        scale = _scale_of(moving_matrix)
+        if any(abs(value - 1.0) > 1e-3 for value in scale):
             issues.append(_issue(
-                "AU.07", f"{entry['prim']}: rotated parts are not supported by this authoring pass",
+                "AU.09",
+                f"{entry['prim']}: non-unit scale {tuple(round(v, 4) for v in scale)} breaks joint frames",
                 owner="modeling"))
             continue
+
+        # Joint frame rotation is carried by body0 (identity); body1 absorbs the
+        # difference, so a rotated part still slides without spinning.
+        rotation0 = root_matrix.ExtractRotation()
+        rotation1 = moving_matrix.ExtractRotation()
+        rotation1_local = rotation1.GetInverse() * rotation0
 
         joint = UsdPhysics.PrismaticJoint.Define(
             stage, f"{joint_scope.GetPath()}/joint_{os.path.basename(entry['prim'])}")
@@ -154,7 +161,11 @@ def author(input_usd: str, handoff: Dict[str, Any], output_usd: str) -> Dict[str
         joint.CreateLocalPos0Attr(Gf.Vec3f(*[float(value) for value in local0]))
         joint.CreateLocalPos1Attr(Gf.Vec3f(*[float(value) for value in local1]))
         joint.CreateLocalRot0Attr(Gf.Quatf(1, 0, 0, 0))
-        joint.CreateLocalRot1Attr(Gf.Quatf(1, 0, 0, 0))
+        quat = rotation1_local.GetQuat()
+        joint.CreateLocalRot1Attr(Gf.Quatf(float(quat.GetReal()),
+                                           float(quat.GetImaginary()[0]),
+                                           float(quat.GetImaginary()[1]),
+                                           float(quat.GetImaginary()[2])))
         if entry["joint"]["pull"] == "negative":
             joint.CreateLowerLimitAttr(-travel)
             joint.CreateUpperLimitAttr(0.0)
@@ -164,7 +175,8 @@ def author(input_usd: str, handoff: Dict[str, Any], output_usd: str) -> Dict[str
 
         created.append({"prim": entry["prim"], "mass_kg": round(mass, 3),
                         "axis": entry["joint"]["axis"], "travel_m": travel,
-                        "pivot_local": [round(float(v), 4) for v in local1]})
+                        "pivot_local": [round(float(v), 4) for v in local1],
+                        "rotation_offset_deg": round(abs(rotation1_local.GetAngle()), 4)})
 
     if issues:
         raise AuthoringError(issues)
@@ -186,13 +198,10 @@ def author(input_usd: str, handoff: Dict[str, Any], output_usd: str) -> Dict[str
     }
 
 
-def _is_identity(matrix, tolerance: float = 1e-3) -> bool:
-    identity = Gf.Matrix3d(1)
-    for row in range(3):
-        for column in range(3):
-            if abs(matrix[row][column] - identity[row][column]) > tolerance:
-                return False
-    return True
+def _scale_of(matrix) -> tuple:
+    """Column norms of the 3x3 part; 1.0 means no scaling."""
+    return tuple(float(Gf.Vec3d(matrix[0][i], matrix[1][i], matrix[2][i]).GetLength())
+                 for i in range(3))
 
 
 def _ensure_collider(mesh: Usd.Prim) -> None:

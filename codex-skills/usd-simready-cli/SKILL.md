@@ -119,9 +119,11 @@ Rules that keep the boundary stable:
   the asset was re-exported and the handoff is stale.
 - **Authoring consumes the handoff and nothing else.** `author` takes pivot,
   travel, axis and mass policy from the handoff; it refuses an input that already
-  carries physics, and it refuses a rotated moving part (non-identity world
-  rotation) instead of inventing joint frames. Refusals are explicit error codes,
-  never a silent approximation.
+  carries physics. Rotated moving parts are supported: the rotation difference
+  between the base body and the part is carried on the joint's body1 frame, and
+  the applied offset is recorded as `rotation_offset_deg` in the audit. Non-unit
+  scale is refused (AU.09) because it breaks joint frames. Refusals are explicit
+  error codes, never a silent approximation.
 - **Mass is volume x density.** Signed-tetrahedron volume keeps hollow parts
   honest; a solid proxy box will report a solid-box mass, so check the modelling
   deliverable, not the formula, when masses look wrong.
