@@ -205,7 +205,8 @@ def resolve_and_validate(report: Dict[str, Any], asset: str, *,
                          version: Optional[str] = None,
                          validator: Optional[str] = None,
                          require_confidence: float = 0.0,
-                         advisor=None) -> Dict[str, Any]:
+                         advisor=None,
+                         require_clean: bool = True) -> Dict[str, Any]:
     """Decide the profile, prove it, and report what could not be evaluated."""
     decision = profile_auto.ProfileDecision()
     resolved_validator = validator
@@ -248,7 +249,7 @@ def resolve_and_validate(report: Dict[str, Any], asset: str, *,
         result = run_validator(resolved_validator, asset, candidate, version)
         if result:
             results.append((candidate, result.get("profile_version") or version or "", result))
-    profile_auto.finalize(decision, results)
+    profile_auto.finalize(decision, results, require_clean=require_clean)
 
     winner = next((body for name, _v, body in results
                    if name == decision.profile_id), None)

@@ -454,6 +454,98 @@ def _cmd_conformance(args: argparse.Namespace) -> int:
     return conformance.exit_code_for(outcome["status"], block)
 
 
+def _cmd_repair(args: argparse.Namespace) -> int:
+    """Repair only the requirements the active profile reports as failing, then re-check."""
+    if not _require_usd_runtime():
+        return 2
+    import conformance
+    import repair_gate
+
+    stage = open_stage(args.input_usd)
+    report = build_detailed_report(stage, args.input_usd, max_prims=max(0, args.max_prims))
+    declared_id, declared_version = conformance.declared_profile(stage)
+    report["_declared_profile"] = (declared_id, declared_version or args.version)
+
+    validator = conformance.find_validator(args.validator)
+    outcome = conformance.resolve_and_validate(
+        report, args.input_usd, requested=args.profile, version=args.version,
+        validator=validator, require_confidence=args.require_confidence,
+        require_clean=False,
+    )
+    result = outcome["result"]
+    if not result:
+        print("[not_evaluated] cannot plan repairs without a validated profile", file=sys.stderr)
+        return 2
+
+    before = conformance.summarize_result(result)
+    if before["status"] == "conformant":
+        print("[conformant] nothing to repair", file=sys.stderr)
+        if args.report:
+            with open(args.report, "w", encoding="utf-8") as handle:
+                json.dump({"before": before, "status": "conformant", "applied": []}, handle, indent=2)
+        return 0
+
+    findings = None
+    if args.findings:
+        with open(args.findings, encoding="utf-8") as handle:
+            findings = json.load(handle)
+    plan = repair_gate.plan(before, findings)
+
+    if args.dry_run:
+        payload = {"before": before, "plan": plan, "dry_run": True}
+        text = json.dumps(payload, indent=2 if args.pretty else None, ensure_ascii=False)
+        if args.report:
+            with open(args.report, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        else:
+            print(text)
+        print(f"[dry-run] {len(plan['allowed'])} licensed, {len(plan['unlicensed'])} unlicensed, "
+              f"{len(plan['unsupported'])} unsupported repairs", file=sys.stderr)
+        return 0
+
+    if not plan["allowed"]:
+        payload = {"before": before, "plan": plan, "applied": [], "status": "no_licensed_repair"}
+        text = json.dumps(payload, indent=2 if args.pretty else None, ensure_ascii=False)
+        if args.report:
+            with open(args.report, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        else:
+            print(text)
+        print(f"[no_licensed_repair] failing codes {plan['failing_codes']} have no repairer",
+              file=sys.stderr)
+        return 1
+
+    audit = repair_gate.apply(args.input_usd, plan["allowed"], args.output)
+
+    after = None
+    if not args.no_revalidate:
+        recheck = conformance.run_validator(
+            validator, args.output,
+            result.get("profile_id"), result.get("profile_version"),
+        )
+        after = conformance.summarize_result(recheck) if recheck else {"status": "not_evaluated"}
+
+    payload = {
+        "before": before,
+        "plan": plan,
+        "repair": audit,
+        "after": after,
+        "status": (after or {}).get("status", "not_revalidated"),
+    }
+    text = json.dumps(payload, indent=2 if args.pretty else None, ensure_ascii=False)
+    if args.report:
+        with open(args.report, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    else:
+        print(text)
+
+    print(f"[{(after or {}).get('status', 'not_revalidated')}] applied {len(audit['applied'])} repair(s) "
+          f"-> {args.output}", file=sys.stderr)
+    if after is None:
+        return 0
+    return conformance.exit_code_for("validated", after)
+
+
 def _cmd_inspect(args: argparse.Namespace) -> int:
     if not _require_usd_runtime():
         return 2
@@ -835,6 +927,24 @@ def build_parser() -> argparse.ArgumentParser:
     conformance_parser.add_argument("--output", help="Write conformance JSON to this path")
     conformance_parser.add_argument("--pretty", action="store_true")
     conformance_parser.set_defaults(func=_cmd_conformance)
+
+    repair_parser = subparsers.add_parser(
+        "repair",
+        help="Apply profile-gated repairs, then re-validate the candidate asset",
+    )
+    repair_parser.add_argument("input_usd")
+    repair_parser.add_argument("--output", required=True, help="Candidate USD to write; the input is never modified")
+    repair_parser.add_argument("--findings", help="Optional upstream findings JSON; derived from conformance when omitted")
+    repair_parser.add_argument("--profile", default="auto", help="Profile id, or 'auto' (default)")
+    repair_parser.add_argument("--version", help="Profile version")
+    repair_parser.add_argument("--validator", help="Path to simready-validate")
+    repair_parser.add_argument("--require-confidence", type=float, default=0.0)
+    repair_parser.add_argument("--report", help="Write the repair audit JSON here")
+    repair_parser.add_argument("--dry-run", action="store_true", help="Show the licensed plan without writing USD")
+    repair_parser.add_argument("--no-revalidate", action="store_true", help="Skip re-validation of the output")
+    repair_parser.add_argument("--max-prims", type=int, default=0)
+    repair_parser.add_argument("--pretty", action="store_true")
+    repair_parser.set_defaults(func=_cmd_repair)
 
     recommend_parser = subparsers.add_parser("recommend", help="Generate a SimReady recommendation JSON")
     recommend_parser.add_argument("reference_json")
