@@ -394,6 +394,34 @@ def _write_recommendation(
     return output
 
 
+def _cmd_handoff(args: argparse.Namespace) -> int:
+    """Merge declared intent with measured geometry; no pxr required."""
+    import handoff
+
+    try:
+        with open(args.report, encoding="utf-8") as handle:
+            report = json.load(handle)
+        intent = handoff.load_intent(args.intent)
+        document = handoff.build(report, intent)
+    except handoff.HandoffError as error:
+        print(json.dumps({"status": "failed", "issues": error.issues}, indent=2, ensure_ascii=False),
+              file=sys.stderr)
+        return 1
+    except (OSError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+    text = json.dumps(document, indent=2 if args.pretty else None, ensure_ascii=False)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        print(args.output)
+    else:
+        print(text)
+    print(f"[handoff] {handoff.summarize(document)}", file=sys.stderr)
+    return 0
+
+
 def _cmd_conformance(args: argparse.Namespace) -> int:
     if not _require_usd_runtime():
         return 2
@@ -961,6 +989,16 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--handoff", help="Handoff JSON declaring moving parts (gate input)")
     inspect_parser.add_argument("--baseline", help="Previous inspection report for the path-stability check")
     inspect_parser.set_defaults(func=_cmd_inspect)
+
+    handoff_parser = subparsers.add_parser(
+        "handoff",
+        help="Merge modelling intent with inspection facts into an authoring handoff",
+    )
+    handoff_parser.add_argument("--report", required=True, help="Inspection JSON from `inspect --gate visual`")
+    handoff_parser.add_argument("--intent", required=True, help="Intent JSON declaring moving parts")
+    handoff_parser.add_argument("--output", help="Write the handoff JSON here")
+    handoff_parser.add_argument("--pretty", action="store_true")
+    handoff_parser.set_defaults(func=_cmd_handoff)
 
     conformance_parser = subparsers.add_parser(
         "conformance",

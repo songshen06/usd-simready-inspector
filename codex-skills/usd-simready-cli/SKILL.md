@@ -1,6 +1,6 @@
 ---
 name: usd-simready-cli
-description: Use when processing USD/USDZ/USDA/USDC assets with the usd-simready-inspector repository, especially to create self-contained SimReady-style static asset exports, fix missing MDL/texture dependencies, normalize relative asset paths, apply reference-based scale, correct Y-up/Z-up or lying-down geometry orientation, author static collision, apply safe primitive-collider repair findings, and validate output reports.
+description: Use when processing USD/USDZ/USDA/USDC assets with the usd-simready-inspector repository, especially to gate a modelling deliverable, derive a handoff of moving parts, check an asset against a SimReady profile, apply profile-licensed repairs, create self-contained SimReady-style static exports, fix missing MDL/texture dependencies, normalize relative asset paths, apply reference-based scale, correct Y-up/Z-up or lying-down geometry orientation, author static collision, apply safe primitive-collider repair findings, and validate output reports.
 ---
 
 # USD SimReady CLI
@@ -46,12 +46,14 @@ Use this skill for:
 - Scale/orientation correction, dependency packaging, static collision authoring, and post-export report checks.
 - Content Physics Agent supplement merging into recommendations.
 - Controlled candidate export for safe `RB.COL.002` primitive-collider findings from `omni-asset-cli`.
+- Visual-layer gating, handoff derivation, profile conformance and profile-licensed repair for static assets.
 
 Call or hand off to the `omniverse-usd-asset-validator` skill for:
 
 - Standalone source mesh validation with `omni-asset-cli validate --profile stage1-furniture`.
 - Explaining validator rule failures such as manifold, topology, normals, missing references, or materials.
 - Isaac Sim Docker runtime checks with `omni-asset-cli physics-hit-test`.
+- Any runtime claim (contact, stability, articulation): the static pipeline only reports `deferred_to_runtime`.
 - End-to-end data-flywheel reports produced by `omni-asset-cli simready-flywheel`.
 
 Do not duplicate validator logic in this skill. Treat validator output as an
@@ -73,6 +75,60 @@ Keep these conclusions separate in reports:
   diverge from visual mesh.
 - Native PhysX view plus contact/A-B probe: runtime evidence of an actual
   air-wall.
+
+## Static Contract Pipeline
+
+The inspector is the boundary between modelling and SimReady authoring. Use this
+chain when the task is "make this asset conform to a SimReady profile", not
+merely "inspect it". It is static by design: runtime behaviour (contact,
+stability, articulation) is validated downstream and must never be claimed here.
+
+```bash
+# 1. gate the modelling deliverable (read-only; the visual layer must have no Physics)
+python3 usd_simready_cli.py inspect VISUAL.usda --gate visual --output inspection.json
+
+# 2. merge declared intent with measured geometry
+python3 usd_simready_cli.py handoff --report inspection.json --intent intent.json --output handoff.json
+
+# 3. check the authored asset against a profile (delegates to simready-validate)
+python3 usd_simready_cli.py conformance AUTHORED.usda --profile auto --output conformance.json
+
+# 4. repair only the codes the profile reports as failing, then re-validate
+python3 usd_simready_cli.py repair AUTHORED.usda --candidate-root out/candidates --render-thumbnail
+```
+
+| command | reads | writes | exit codes |
+| --- | --- | --- | --- |
+| `inspect --gate visual` | visual USD (+ optional handoff, baseline) | inspection JSON | 0 pass, 1 gate failed |
+| `handoff` | inspection JSON + intent JSON | handoff JSON | 0 ok, 1 invalid intent, 2 unreadable input |
+| `conformance` | USD | conformance JSON | 0 conformant, 1 non-conformant, 2 not evaluated |
+| `repair` | USD (+ findings) | candidate USD + audit | 0 conformant after repair, 1 still failing / no licensed repair, 2 not evaluated |
+
+Rules that keep the boundary stable:
+
+- **Never infer moving parts from prim names.** They must be declared in the
+  intent/handoff. Without a handoff, gate checks 07/08 report `skipped`, not a guess.
+- **Derive, do not author numbers.** The handoff computes `pivot` (the bbox face
+  the joint pulls away from) and `travel` (`bbox depth − reserve`). If the geometry
+  changes, regenerate the handoff instead of editing values.
+- **`facts_digest` pins the geometry** the handoff was built from; a mismatch means
+  the asset was re-exported and the handoff is stale.
+- **Authoring must not re-read geometry heuristically**: it consumes the handoff.
+- **Conformance is not ours to decide.** It calls `simready-validate` in a
+  subprocess (`--validator`, `$SIMREADY_VALIDATE`, or `PATH`); that package needs
+  Python < 3.13, so never import it into the DCC interpreter.
+- **Optional features are deferred, not failed.** Feature misses under an optional
+  feature land in `deferred_to_runtime`, grouped by physx / newton / mujoco / isaac.
+- **Repair needs authorization.** A repairer runs only when the active profile
+  reports that requirement code as failing; otherwise the finding is reported as
+  `unlicensed` (not applicable) or `unsupported` (no repairer) and left untouched.
+- **A thumbnail is never fabricated.** `--render-thumbnail` copies an existing PNG
+  or renders one with `usdrecord`, then Blender; failure reports `unavailable` and
+  leaves `SR.002` failing.
+
+When asked "is this asset SimReady", report the profile, its version, the
+conformance status, the failing required features, and the deferred runtime list.
+Do not answer "yes" from inspection alone.
 
 ## Primitive Collider Repair From Validator Findings
 
@@ -133,6 +189,30 @@ Inspect only:
 
 ```bash
 python3 usd_simready_cli.py inspect INPUT_USD --output REPORT_JSON --pretty
+```
+
+Gate a modelling deliverable (no Physics allowed in the visual layer):
+
+```bash
+python3 usd_simready_cli.py inspect VISUAL_USD --gate visual --output INSPECTION_JSON
+```
+
+Derive the authoring handoff:
+
+```bash
+python3 usd_simready_cli.py handoff --report INSPECTION_JSON --intent INTENT_JSON --output HANDOFF_JSON
+```
+
+Check against a profile:
+
+```bash
+python3 usd_simready_cli.py conformance INPUT_USD --profile auto --output CONFORMANCE_JSON
+```
+
+Profile-licensed repair with re-validation:
+
+```bash
+python3 usd_simready_cli.py repair INPUT_USD --candidate-root OUT_ROOT --render-thumbnail --report AUDIT_JSON
 ```
 
 Recommend only:
