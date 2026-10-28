@@ -116,12 +116,30 @@ def rank(results: List[tuple[str, str, Dict[str, Any]]]) -> Optional[tuple[str, 
     return clean[0] if clean else None
 
 
-def finalize(decision: ProfileDecision, results: List[tuple[str, str, Dict[str, Any]]]) -> ProfileDecision:
-    """Confirm a guess with evidence; never keep a candidate that failed validation."""
+def finalize(decision: ProfileDecision, results: List[tuple[str, str, Dict[str, Any]]],
+             require_clean: bool = True) -> ProfileDecision:
+    """Confirm a guess with evidence.
+
+    With ``require_clean`` (the default) a candidate must pass every required
+    feature. Repair flows pass ``False``: they need the profile the asset is
+    *trying* to satisfy, so the least-failing candidate is kept and flagged.
+    """
     best = rank(results)
     if best:
         decision.profile_id, decision.profile_version = best
         decision.source, decision.confidence = "validated", 0.95
+        return decision
+
+    if not require_clean and results:
+        def blocking_count(item):
+            return sum(1 for body in item[2].get("features_summary", {}).values()
+                       if body.get("blocking_failure"))
+
+        name, version, body = min(results, key=blocking_count)
+        decision.profile_id = name
+        decision.profile_version = body.get("profile_version") or version
+        decision.source, decision.confidence = "inferred", 0.5
+        decision.evidence.append("profile inferred from the least-failing candidate (repair context)")
         return decision
     decision.profile_id = None
     decision.profile_version = None
