@@ -394,6 +394,32 @@ def _write_recommendation(
     return output
 
 
+def _cmd_author(args: argparse.Namespace) -> int:
+    """Author physics from a handoff; geometry is never re-derived here."""
+    if not _require_usd_runtime():
+        return 2
+    import author
+
+    try:
+        handoff = author.load_handoff(args.handoff)
+        audit = author.author(args.input_usd, handoff, args.output)
+    except author.AuthoringError as error:
+        print(json.dumps({"status": "failed", "issues": error.issues}, indent=2, ensure_ascii=False),
+              file=sys.stderr)
+        return 1
+    except (OSError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+    text = json.dumps(audit, indent=2 if args.pretty else None, ensure_ascii=False)
+    if args.report:
+        with open(args.report, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    print(args.output)
+    print(f"[authored] {author.summarize(audit)}", file=sys.stderr)
+    return 0
+
+
 def _cmd_handoff(args: argparse.Namespace) -> int:
     """Merge declared intent with measured geometry; no pxr required."""
     import handoff
@@ -989,6 +1015,17 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--handoff", help="Handoff JSON declaring moving parts (gate input)")
     inspect_parser.add_argument("--baseline", help="Previous inspection report for the path-stability check")
     inspect_parser.set_defaults(func=_cmd_inspect)
+
+    author_parser = subparsers.add_parser(
+        "author",
+        help="Author rigid bodies, colliders and joints from a handoff document",
+    )
+    author_parser.add_argument("input_usd", help="Visual-layer USD (must not carry physics)")
+    author_parser.add_argument("--handoff", required=True, help="Handoff JSON")
+    author_parser.add_argument("--output", required=True, help="Authored USD to write")
+    author_parser.add_argument("--report", help="Write the authoring audit JSON here")
+    author_parser.add_argument("--pretty", action="store_true")
+    author_parser.set_defaults(func=_cmd_author)
 
     handoff_parser = subparsers.add_parser(
         "handoff",
