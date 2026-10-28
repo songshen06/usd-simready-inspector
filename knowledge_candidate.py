@@ -74,6 +74,10 @@ def _collect_name_signals(report: Dict[str, Any]) -> List[Tuple[str, str]]:
         semantic_type = item.get("semantic_type")
         if semantic_data:
             signals.append((str(semantic_data), f"metadata.semantic_entries.{semantic_type or 'unknown'}"))
+        for label in item.get("labels") or []:
+            if label:
+                taxonomy = item.get("semantic_key") or "class"
+                signals.append((str(label), f"metadata.semantic_entries.{taxonomy}"))
 
     basename = _basename_without_ext(file_path)
     if basename:
@@ -92,6 +96,20 @@ def extract_semantic_metadata(report: Dict[str, Any]) -> Dict[str, Any]:
         "entries": metadata.get("semantic_entries", []) or [],
     }
     for entry in metadata.get("semantic_entries", []) or []:
+        labels = [str(item).strip() for item in (entry.get("labels") or []) if str(item).strip()]
+        if labels:
+            taxonomy = str(entry.get("semantic_key") or "class").strip().lower()
+            if taxonomy in ("class", "classes"):
+                result["classes"].extend(labels)
+            elif taxonomy == "qcode":
+                result["qcodes"].extend(labels)
+            elif taxonomy == "hierarchy":
+                result["hierarchies"].extend(labels)
+            elif taxonomy in ("anchortag", "anchor_tag"):
+                result["anchor_tags"].extend(labels)
+            else:
+                result["label_tags"].extend(labels)
+            continue
         semantic_type = str(entry.get("semantic_type") or "").strip().lower()
         semantic_data = str(entry.get("semantic_data") or "").strip()
         if not semantic_data:
@@ -632,7 +650,7 @@ def extract_physics_values(report: Dict[str, Any]) -> Dict[str, Any]:
             approximation_distribution[approximation_key] = approximation_distribution.get(approximation_key, 0) + 1
         if item.get("is_static_collider") and item.get("path"):
             static_collision_paths.append(item.get("path"))
-        if item.get("body_type") == "dynamic_or_kinematic" and item.get("path"):
+        if item.get("body_type") in ("dynamic", "kinematic", "dynamic_or_kinematic") and item.get("path"):
             dynamic_collision_paths.append(item.get("path"))
 
     physics_material_params: List[Dict[str, Any]] = []
