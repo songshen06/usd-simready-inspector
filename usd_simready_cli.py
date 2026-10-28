@@ -515,12 +515,36 @@ def _cmd_repair(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
 
-    audit = repair_gate.apply(args.input_usd, plan["allowed"], args.output)
+    if args.candidate_root and args.output:
+        print("error: --output and --candidate-root are mutually exclusive", file=sys.stderr)
+        return 2
+    layout = None
+    output_path = args.output
+    if args.candidate_root:
+        stem = os.path.splitext(os.path.basename(args.input_usd))[0]
+        layout = repair_gate.candidate_layout(args.candidate_root, stem)
+        output_path = layout["usd_path"]
+    if not output_path:
+        print("error: pass --output or --candidate-root", file=sys.stderr)
+        return 2
+
+    audit = repair_gate.apply(args.input_usd, plan["allowed"], output_path)
+
+    thumbnail = None
+    if layout is not None:
+        thumbnail = repair_gate.install_thumbnail(
+            args.input_usd, layout["thumb_path"], args.thumbnail)
+        if thumbnail.get("status") != "installed" and args.render_thumbnail:
+            rendered = repair_gate.render_thumbnail(
+                args.input_usd, layout["thumb_path"], blender=args.blender)
+            rendered["copy_attempt"] = thumbnail
+            thumbnail = rendered
+        audit["thumbnail"] = thumbnail
 
     after = None
     if not args.no_revalidate:
         recheck = conformance.run_validator(
-            validator, args.output,
+            validator, output_path,
             result.get("profile_id"), result.get("profile_version"),
         )
         after = conformance.summarize_result(recheck) if recheck else {"status": "not_evaluated"}
@@ -529,6 +553,8 @@ def _cmd_repair(args: argparse.Namespace) -> int:
         "before": before,
         "plan": plan,
         "repair": audit,
+        "layout": layout,
+        "thumbnail": thumbnail,
         "after": after,
         "status": (after or {}).get("status", "not_revalidated"),
     }
@@ -540,7 +566,9 @@ def _cmd_repair(args: argparse.Namespace) -> int:
         print(text)
 
     print(f"[{(after or {}).get('status', 'not_revalidated')}] applied {len(audit['applied'])} repair(s) "
-          f"-> {args.output}", file=sys.stderr)
+          f"-> {output_path}", file=sys.stderr)
+    if thumbnail:
+        print(f"[thumbnail:{thumbnail['status']}]", file=sys.stderr)
     if after is None:
         return 0
     return conformance.exit_code_for("validated", after)
@@ -933,7 +961,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Apply profile-gated repairs, then re-validate the candidate asset",
     )
     repair_parser.add_argument("input_usd")
-    repair_parser.add_argument("--output", required=True, help="Candidate USD to write; the input is never modified")
+    repair_parser.add_argument("--output", help="Candidate USD path; mutually exclusive with --candidate-root")
+    repair_parser.add_argument(
+        "--candidate-root",
+        help="Write a standard SimReady candidate dir: <root>/<asset>/simready_usd/<asset>.usda + thumbnail",
+    )
+    repair_parser.add_argument("--thumbnail", help="PNG to install as the SR.002 thumbnail")
+    repair_parser.add_argument(
+        "--render-thumbnail", action="store_true",
+        help="Render a thumbnail when none exists (usdrecord, then Blender); never fabricates one",
+    )
+    repair_parser.add_argument("--blender", help="Blender executable for thumbnail rendering")
     repair_parser.add_argument("--findings", help="Optional upstream findings JSON; derived from conformance when omitted")
     repair_parser.add_argument("--profile", default="auto", help="Profile id, or 'auto' (default)")
     repair_parser.add_argument("--version", help="Profile version")
