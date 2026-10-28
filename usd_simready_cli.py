@@ -577,6 +577,29 @@ def _cmd_repair(args: argparse.Namespace) -> int:
 def _cmd_inspect(args: argparse.Namespace) -> int:
     if not _require_usd_runtime():
         return 2
+    if getattr(args, "gate", None):
+        import visual_gate
+
+        stage = open_stage(args.input_usd)
+        report = build_detailed_report(stage, args.input_usd, max_prims=max(0, args.max_prims))
+        report["prim_paths"] = [prim.GetPath().pathString for prim in stage.Traverse()]
+        handoff = visual_gate.load_handoff(args.handoff)
+        baseline = visual_gate.load_baseline(args.baseline)
+        report["visual_gate"] = visual_gate.run_gate(stage, report, handoff, baseline)
+
+        text = json.dumps(report, indent=2 if args.pretty else None, ensure_ascii=False)
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            print(args.output)
+        else:
+            print(text)
+        gate = report["visual_gate"]
+        print(f"[gate:{gate['status']}] {len(gate['failed'])} failed check(s)", file=sys.stderr)
+        for check in gate["failed"]:
+            print(f"  {check['id']} {check['name']}: {check['detail']}", file=sys.stderr)
+        return visual_gate.exit_code(gate)
+
     output = _write_inspection_report(args.input_usd, args.output, args.pretty, args.max_prims)
     if output:
         print(output)
@@ -931,6 +954,12 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--output")
     inspect_parser.add_argument("--pretty", action="store_true")
     inspect_parser.add_argument("--max-prims", type=int, default=0)
+    inspect_parser.add_argument(
+        "--gate", choices=["visual"],
+        help="Run the pre-authoring gate: reject geometry that cannot be simulated reliably",
+    )
+    inspect_parser.add_argument("--handoff", help="Handoff JSON declaring moving parts (gate input)")
+    inspect_parser.add_argument("--baseline", help="Previous inspection report for the path-stability check")
     inspect_parser.set_defaults(func=_cmd_inspect)
 
     conformance_parser = subparsers.add_parser(
