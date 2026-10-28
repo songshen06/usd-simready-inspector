@@ -1,6 +1,128 @@
 # 更新说明
 
-## 2026-10-28 — SimReady 契约检查与定向修复（PR #1）
+## 2026-10-28（二）— 静态契约流水线：gate → handoff → author（PR #2）
+
+这一轮把“建模导出”和“SimReady 设定”拆成两个边界清晰的阶段，中间用数据而不是猜测连接。
+工具不再从 `.blend` 对象名或 prim 命名推断可动件，而是分成三道显式步骤，每一步的失败都能归因到具体 owner。
+
+```
+建模交付（纯视觉 USD，无 Physics）
+   → inspect --gate visual   拒绝不可仿真几何，发布事实（bbox / 材质 / 部件）
+   → handoff                 intent + 实测几何 → 契约（pivot / travel / facts_digest）
+   → author                  只消费 handoff，写刚体 / 碰撞 / 关节 / 物理场景
+   → conformance             官方 validator 判定（上一轮已提供）
+   → repair                  按码授权修复 + 复验（上一轮已提供）
+```
+
+四个提交（`main` 上为 `1eb8707` → `f30afe7` → `2b20fa0` → `1e8d3d2`）：
+
+| 提交 | 主要内容 |
+| --- | --- |
+| `1eb8707` | 视觉层闸门：8 项结构检查 + 事实发布 |
+| `f30afe7` | handoff：intent 与实测几何合并，导出 pivot / travel / digest |
+| `2b20fa0` | author：从 handoff 写物理，不回读几何 |
+| `1e8d3d2` | author：支持旋转件（旋转差写入 body1 的关节帧） |
+
+### 1. 视觉层闸门 `inspect --gate visual`
+
+在 authoring 之前拒绝“无法可靠仿真”的几何，并对建模侧发布后续步骤需要的事实。
+
+| 检查 | 内容 | owner |
+| --- | --- | --- |
+| GATE.01 / 02 | `upAxis=Z`、`metersPerUnit=1.0` | modeling |
+| GATE.03 | `defaultPrim` 存在且有效 | modeling |
+| GATE.04 | 视觉层**不含**任何 Physics schema | modeling |
+| GATE.05 | 每个 render mesh 都有材质绑定 | modeling |
+| GATE.06 | 单根层级，无游离 prim | modeling |
+| GATE.07 | handoff 声明的可动件存在，且是带 mesh 子节点的分组 prim | intent |
+| GATE.08 | 可动件 bbox 落在声明 root 的 bbox 内 | modeling |
+| GATE.09 | 与基线报告比对，prim 路径保持稳定（重导幂等） | modeling |
+
+- 输出附带 `facts.parts`：每个“叶子分组 prim”的 bbox、mesh 数、绑定材质。这样 handoff 与 authoring 不必重复解析 stage。
+- 分组 prim 的识别同时兼容显式 `Xform` 与 DCC 常见的**无类型分组 prim**（第一版只认 `IsA(UsdGeom.Xform)`，端到端时暴露了漏识别，已修）。
+- 失败时退出码 1，`failed[]` 每条带 `owner`，可直接分派回建模侧。
+
+### 2. 契约合并 `handoff`
+
+输入是闸门产出的 inspection JSON 加一份很小的 intent；输出是 authoring 的唯一输入。
+
+```json
+{
+  "schema": "simready-handoff/1",
+  "root": "/cab/geometry/carcass",
+  "moving": [{
+    "prim": "/cab/geometry/drawer_01",
+    "joint": {"type": "prismatic", "axis": "Y", "pull": "negative"},
+    "travel_m": 0.28,
+    "pivot": [0.0, -0.165, 0.2],
+    "depth_m": 0.33,
+    "bbox": [-0.315, -0.165, 0.125, 0.315, 0.165, 0.275],
+    "materials": ["/cab/looks/mat"],
+    "mass": {"policy": "volume_x_density", "density_kg_m3": 700}
+  }],
+  "facts_digest": "sha256:…"
+}
+```
+
+- `pivot` = 关节拉离的那一面（`pull=negative` 取 bbox 的 −轴面中心）；
+- `travel` = 沿轴 bbox 深度 − reserve，几何变了自动跟着变；
+- `facts_digest` 钉住几何：资产重导后 digest 变化，说明 handoff 已过期，应重生成而不是手改数字；
+- 拒绝：未声明的 prim、未知轴、重复 prim、越出 root、`travel ≥ depth`、密度非正；
+- 这一层**不依赖 `pxr`**（纯 JSON），所以可以脱离 USD 环境测试。
+
+### 3. 物理授权 `author`
+
+```bash
+usd-simready author VISUAL.usda --handoff handoff.json --output AUTHORED.usda --report audit.json
+```
+
+- 只读 handoff：pivot / travel / 轴向 / 质量策略全部来自契约；
+- 写：`PhysicsScene`、基座（kinematic）与可动件刚体、`MassAPI`、逐 mesh 的 `convexHull` 碰撞体、棱柱关节（限位由 travel 与 pull 推出）；
+- 质量 = **有符号四面体体积 × 密度**，空心板件不会被当成实心块；
+- 拒绝：输入已带 Physics（`AU.03`）、非单位缩放（`AU.09`，缩放会破坏关节帧）、输出覆盖输入（`AU.01`）；
+- **旋转件已支持**：基座与可动件的世界旋转差写入 `physics:localRot1`，抽屉转过角度也只会沿轴平移、不会自转；审计里记录 `rotation_offset_deg`。
+
+### 边界规则（写进 skill 文档）
+
+1. **不猜可动件**：必须由 intent/handoff 声明；没有 handoff 时 GATE.07/08 标 `skipped`，不按命名推断。
+2. **不手工填数**：pivot、travel、质量全部从几何/策略推导。
+3. **`facts_digest` 校验**：几何变了就重生成 handoff。
+4. **author 不回读几何**：消费 handoff，不做启发式。
+5. **判定不自己做**：conformance 委托 `simready-validate`（需 Python < 3.13，走子进程）。
+6. **optional 未满足 → `deferred_to_runtime`**，按 physx / newton / mujoco / isaac 分组，不挡 CI。
+7. **repair 需授权**：只改当前 profile 判失败的 requirement code，其余归 `unlicensed` / `unsupported`。
+8. **缩略图不伪造**：复制或渲染，失败报 `unavailable`，让 `SR.002` 保持失败。
+
+### 退出码
+
+| 命令 | 0 | 1 | 2 |
+| --- | --- | --- | --- |
+| `inspect --gate visual` | 通过 | 闸门失败 | — |
+| `handoff` | 生成成功 | 意图无效 | 输入不可读 |
+| `author` | 授权成功 | 拒绝（已带物理 / 缩放 / 覆盖源文件） | 输入不可读 |
+| `conformance` | 合规 | 不合规 | 未判定 |
+| `repair` | 修复后合规 | 仍不合规 / 无可授权修复 | 未判定 |
+
+### 验证
+
+- **18 个 pytest**：6 gate + 7 handoff + 5 author。handoff 用例完全不需要 `pxr`，印证该层是纯数据。
+- 端到端：`gate(pass)` → `handoff(travel 0.28)` → `author` → 产出 USD 内 3 个刚体、3 个碰撞体、2 个 `PhysicsPrismaticJoint`（轴 Y、限位 `[-0.28, 0]`、body0/body1 正确）。
+- 失败路径全部有断言：物理泄漏、未绑定材质、可动件越界、引用缺失、路径漂移、非法轴、`travel ≥ depth`、非单位缩放、覆盖源文件。
+- 合并后在干净 clone 上重跑：18 passed，四个命令（gate / handoff / author / conformance）对已交付资产均返回 0。
+
+### 已知限制
+
+- `author` 只支持棱柱关节；旋转件靠关节帧补偿，可动件自身仍需是单一分组 prim。
+- 质量公式只反映几何：fixture 用实心盒子时柜体会算出 123 kg；真实板件资产约 18 kg。质量异常应回查建模交付物，而不是改公式。
+- handoff 的 `pivot` 取“拉离面中心”，隐含关节锚点在面板中心；若滑轨锚点另有位置，需要扩展 intent（当前不做近似）。
+
+### 下一步
+
+1. 把 builder 生成的两个资产（3 抽屉 / 4 抽屉）接进 fixture，验证“换资产只换 manifest + intent”；
+2. `apply --handoff`，把 recommendation 驱动的 authoring 也统一到 handoff 输入，减少一条并行通路；
+3. `author` 扩展旋转轴对齐检查（当前只校验缩放，不校验轴是否与几何主轴一致）。
+
+## 2026-10-28（一）— SimReady 契约检查与定向修复（PR #1）
 
 本次更新把工具从“只做静态检查与推荐”扩展为**可判定的契约检查 + 受控修复闭环**：
 给定一个 SimReady profile，工具能回答“是否合规、差哪几条 requirement、能自动修哪些、修完是否真的合规”。
